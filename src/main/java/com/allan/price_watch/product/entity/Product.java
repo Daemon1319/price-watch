@@ -30,6 +30,11 @@ import lombok.Setter;
  * {@code consecutiveFailures} is intentionally plain and app-managed — the
  * scrape worker increments/resets it directly, there's no DB-side logic for
  * it beyond the partial index that speeds up querying for unhealthy rows.
+ *
+ * <p>{@code name} (added in {@code V5__add_product_name.sql}) is nullable —
+ * a scrape can successfully extract price/stock while failing to find a
+ * clean title. Callers should fall back to displaying {@code normalizedUrl}
+ * when it's null, not treat a missing name as an error.
  */
 @Entity
 @Table(name = "products")
@@ -44,6 +49,9 @@ public class Product {
   @Generated(event = EventType.INSERT)
   @Column(name = "id", insertable = false, updatable = false, nullable = false)
   private UUID id;
+
+  @Column(name = "name")
+  private String name;
 
   @Column(name = "normalized_url", nullable = false)
   private String normalizedUrl;

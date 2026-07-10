@@ -1,3 +1,103 @@
 spring:
   application:
-    name: price_watch
+    name: price-watch
+
+  # Used only if nothing else sets an active profile (no -D flag, no
+  # SPRING_PROFILES_ACTIVE env var). Using `profiles.default` rather than
+  # `profiles.active` here specifically because `default` is designed to
+  # be silently overridden this way — `active` set in a properties file
+  # is a stickier, less obvious thing to override from the environment.
+  profiles:
+    default: local
+
+  threads:
+    virtual:
+      enabled: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          '[batch_size]': 25
+        '[order_inserts]': true
+        '[order_updates]': true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jackson:
+    default-property-inclusion: non_null
+
+  cache:
+    redis:
+      time-to-live: 10m
+
+  docker:
+    compose:
+      enabled: true
+      file: compose.yaml
+      lifecycle-management: start-and-stop
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-ttl: 15m
+  scheduler:
+    # Every hour, on the hour. Configurable rather than hardcoded in
+    # ProductCheckScheduler so the cadence can be tuned per environment
+    # (e.g. less frequent in a demo/free-tier deployment) without a
+    # code change.
+    product-check-cron: "0 0 * * * *"
+
+logging:
+  level:
+    root: INFO
+    '[com.allan.price_watch]': DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+
+# Read by MinioStorageService (@Profile("local")). Credentials match the
+# minio service defined in compose.yaml — fine as plain values here since
+# this profile only ever runs against your own local Docker containers.
+app:
+  storage:
+    minio:
+      endpoint: http://localhost:9000
+      access-key: pricewatch
+      secret-key: pricewatch123
+      bucket: pricewatch-thumbnails
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+# Read by AzureBlobStorageService (@Profile("prod")). Connection string
+# comes from an env var, never a literal here — this block is the one that
+# actually ships to a real environment.
+app:
+  storage:
+    azure:
+      connection-string: ${AZURE_STORAGE_CONNECTION_STRING}
+      container: pricewatch-thumbnails
