@@ -57,6 +57,20 @@ public class Product {
   @Column(name = "thumbnail_url")
   private String thumbnailUrl;
 
+  /** Uniqlo color code, e.g. COL09. Null for legacy non-variant rows. */
+  @Column(name = "color_code", length = 20)
+  private String colorCode;
+
+  /** Uniqlo size code, e.g. SMA004 (M) or INS029 (29"). */
+  @Column(name = "size_code", length = 20)
+  private String sizeCode;
+
+  @Column(name = "color_name", length = 100)
+  private String colorName;
+
+  @Column(name = "size_name", length = 100)
+  private String sizeName;
+
   @Column(name = "last_checked_at")
   private Instant lastCheckedAt;
 

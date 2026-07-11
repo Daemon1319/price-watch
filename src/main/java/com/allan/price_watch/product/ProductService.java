@@ -13,13 +13,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.allan.price_watch.common.exception.InvalidUrlException;
 import com.allan.price_watch.common.exception.ResourceNotFoundException;
+import com.allan.price_watch.common.exception.VariantRequiredException;
 import com.allan.price_watch.product.dto.PriceHistoryResponse;
 import com.allan.price_watch.product.dto.ProductResponse;
+import com.allan.price_watch.product.dto.ProductVariantsResponse;
 import com.allan.price_watch.product.entity.Product;
+import com.allan.price_watch.product.entity.Site;
 import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.scraper.ScrapeResult;
 import com.allan.price_watch.scraper.Scraper;
 import com.allan.price_watch.scraper.ScraperFactory;
+import com.allan.price_watch.scraper.site.UniqloScraper;
 import com.allan.price_watch.trackeditem.entity.PriceHistory;
 import com.allan.price_watch.trackeditem.repository.PriceHistoryRepository;
 import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
@@ -50,19 +54,62 @@ public class ProductService {
     this.transactionTemplate = transactionTemplate;
   }
 
-  /** Returns an existing product for the URL, or scrapes and creates one. */
+  /**
+   * Returns an existing product for the URL, or scrapes and creates one.
+   * Uniqlo URLs must include colorCode + sizeCode (variant-level tracking).
+   */
   public Product findOrCreateByUrl(String rawUrl) {
+    return findOrCreateByUrl(rawUrl, null, null);
+  }
+
+  /**
+   * Like {@link #findOrCreateByUrl(String)} but merges optional body color/size into the URL.
+   */
+  public Product findOrCreateByUrl(String rawUrl, String colorCode, String sizeCode) {
     String normalizedUrl;
     URI uri;
     try {
-      normalizedUrl = urlNormalizer.normalize(rawUrl);
+      normalizedUrl = urlNormalizer.normalizeWithVariant(rawUrl, colorCode, sizeCode);
       uri = URI.create(normalizedUrl);
     } catch (IllegalArgumentException e) {
       throw new InvalidUrlException();
     }
 
+    Scraper scraper = scraperFactory.resolve(uri);
+    requireVariantIfNeeded(scraper.getSite(), normalizedUrl);
+
     return productRepository.findByNormalizedUrl(normalizedUrl)
-        .orElseGet(() -> createFromScrape(rawUrl, normalizedUrl, uri));
+        .orElseGet(() -> createFromScrape(rawUrl, normalizedUrl, uri, scraper));
+  }
+
+  /** Lists color/size options for a product URL without creating a product row. */
+  public ProductVariantsResponse listVariants(String rawUrl) {
+    URI uri;
+    try {
+      // Strip tracking junk but do not require variant params for discovery.
+      String normalized = urlNormalizer.normalize(rawUrl);
+      uri = URI.create(normalized);
+    } catch (IllegalArgumentException e) {
+      throw new InvalidUrlException();
+    }
+
+    Scraper scraper = scraperFactory.resolve(uri);
+    if (!(scraper instanceof UniqloScraper uniqloScraper)) {
+      throw new ResourceNotFoundException("Variant listing is only supported for Uniqlo URLs.");
+    }
+    return uniqloScraper.listVariants(uri);
+  }
+
+  /** Uniqlo tracking is always size+color specific. */
+  private void requireVariantIfNeeded(Site site, String normalizedUrl) {
+    if (site != Site.UNIQLO) {
+      return;
+    }
+    String color = urlNormalizer.colorCode(normalizedUrl);
+    String size = urlNormalizer.sizeCode(normalizedUrl);
+    if (color == null || size == null) {
+      throw new VariantRequiredException();
+    }
   }
 
   /** Loads a product by id for API responses. */
@@ -101,8 +148,8 @@ public class ProductService {
   }
 
   /** Scrapes a new URL outside a TX, then persists product + first price point. */
-  private Product createFromScrape(String originalUrl, String normalizedUrl, URI uri) {
-    Scraper scraper = scraperFactory.resolve(uri);
+  private Product createFromScrape(
+      String originalUrl, String normalizedUrl, URI uri, Scraper scraper) {
     ScrapeResult result = scraper.fetch(uri);
 
     try {
@@ -127,6 +174,10 @@ public class ProductService {
               .lastKnownPrice(result.price())
               .lastKnownStockStatus(result.stockStatus())
               .thumbnailUrl(result.thumbnailUrl())
+              .colorCode(result.colorCode())
+              .colorName(result.colorName())
+              .sizeCode(result.sizeCode())
+              .sizeName(result.sizeName())
               .lastCheckedAt(Instant.now())
               .consecutiveFailures(0)
               .build();

@@ -1,12 +1,11 @@
+# Shared defaults — no hosts, accounts, or secrets.
+# Credentials and localhost wiring live only under the `local` profile.
 spring:
   application:
     name: price-watch
 
-  # Used only if nothing else sets an active profile (no -D flag, no
-  # SPRING_PROFILES_ACTIVE env var). Using `profiles.default` rather than
-  # `profiles.active` here specifically because `default` is designed to
-  # be silently overridden this way — `active` set in a properties file
-  # is a stickier, less obvious thing to override from the environment.
+  # Overridable via SPRING_PROFILES_ACTIVE / -Dspring.profiles.active.
+  # `default` (not `active`) so env/CLI can replace it cleanly.
   profiles:
     default: local
 
@@ -37,13 +36,11 @@ spring:
     redis:
       time-to-live: 10m
 
+  # Compose is local-only; other profiles must not pull up Docker deps.
   docker:
     compose:
-      enabled: true
+      enabled: false
       file: compose.yaml
-      # Overridden to start-only on the local profile (see below).
-      lifecycle-management: start-and-stop
-      # Don't fail app startup if Docker isn't running (e.g. CI without daemon).
       skip:
         in-tests: true
 
@@ -61,25 +58,18 @@ management:
 
 app:
   cors:
-    # Overridden per profile (local hard-codes :3000; prod uses CORS_ALLOWED_ORIGINS).
-    # Default keeps tests / default profile booting without a null property.
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
   jwt:
-    # Required in prod via JWT_SECRET env var. Local default is fine only for
-    # solo dev (Base64 of 32+ random bytes) — never reuse this value outside local.
-    secret: ${JWT_SECRET:dGVzdC1zZWNyZXQtdGhhdC1pcy1sb25nLWVub3VnaC0zMmJ5dGVzISE=}
+    secret: ${JWT_SECRET}
     access-token-ttl: 15m
   auth:
     refresh-cookie:
       name: pw_refresh
-      # Only sent to auth endpoints (login/register set it; refresh/logout read it).
       path: /api/v1/auth
       max-age-days: 7
-      # Cross-origin SPA → API requires None + Secure (localhost is treated as secure).
       same-site: ${REFRESH_COOKIE_SAME_SITE:None}
       secure: ${REFRESH_COOKIE_SECURE:true}
   scheduler:
-    # Every 4 hours (second minute hour day month weekday).
     product-check-cron: "0 0 */4 * * *"
   outbox:
     poll-interval-ms: 5000
@@ -87,51 +77,49 @@ app:
   rate-limit:
     capacity: 60
     refill-per-minute: 60
-    # Stricter bucket for POST /auth/login and /auth/register (credential stuffing).
     auth-capacity: 10
     auth-refill-per-minute: 10
-    # Only set true behind a reverse proxy that overwrites X-Forwarded-For.
-    # Blind trust lets clients spoof IPs and bypass per-IP rate limits.
     trust-forwarded-headers: ${RATE_LIMIT_TRUST_FORWARDED_HEADERS:false}
   tracking:
-    # Soft abuse guard: caps ACTIVE + PAUSED subscriptions per user.
     max-items-per-user: ${TRACKING_MAX_ITEMS_PER_USER:50}
   mail:
-    from: ${MAIL_FROM:pricewatch@localhost}
+    from: ${MAIL_FROM}
 
 logging:
   level:
     root: INFO
-    '[com.allan.price_watch]': DEBUG
+    '[com.allan.price_watch]': INFO
 
 ---
+# Local: Docker Compose + MailHog. Only profile with embedded credentials.
 spring:
   config:
     activate:
       on-profile: local
-  # Explicit so we never depend on Docker Compose connection-details guessing
-  # (wrong password / wrong host if something else is on 5432, or if compose
-  # skipped startup and left half the stack down).
+
+  # Explicit hosts so we never depend on Compose connection-details guessing.
   datasource:
-    # 127.0.0.1 (not localhost): on Windows, localhost can resolve to ::1 and hit
-    # a different listener than Docker's published 0.0.0.0:5433 mapping.
+    # 127.0.0.1 (not localhost): on Windows, localhost can resolve to ::1 and miss Docker's port map.
     url: jdbc:postgresql://127.0.0.1:5433/pricewatch
     username: pricewatch
     password: pricewatch
-  # Local-only: V6 was edited after apply; repair realigns flyway_schema_history
-  # checksums so startup does not die on validate. Never enable this in prod.
+
+  # V6 was edited after apply; repair realigns flyway_schema_history. Never enable outside local.
   flyway:
     repair-on-migrate: true
+
   data:
     redis:
       host: localhost
       port: 6379
+
   rabbitmq:
     host: localhost
     port: 5672
     username: pricewatch
     password: pricewatch
-  # Local SMTP → MailHog (compose). UI at http://localhost:8025
+
+  # MailHog SMTP. UI: http://localhost:8025
   mail:
     host: localhost
     port: 1025
@@ -141,22 +129,84 @@ spring:
           auth: false
           starttls:
             enable: false
+
   docker:
     compose:
-      # start-only: bring the stack up if needed, but do NOT stop containers
-      # when the app exits. start-and-stop was killing Redis/Postgres on
-      # failed boots, then the next run said "already running, skipping"
-      # while half the services were actually down / auth-mismatched.
+      enabled: true
+      # start-only: bring deps up if needed; do not stop them when the app exits.
       lifecycle-management: start-only
 
 app:
   cors:
     allowed-origins: http://localhost:3000
+  jwt:
+    # Solo-dev only — never reuse outside local.
+    secret: dGVzdC1zZWNyZXQtdGhhdC1pcy1sb25nLWVub3VnaC0zMmJ5dGVzISE=
+  mail:
+    from: pricewatch@localhost
   errors:
-    # Include exception class/message in 500 JSON so Postman debugging is easier.
     expose-details: true
 
+logging:
+  level:
+    '[com.allan.price_watch]': DEBUG
+
 ---
+# App on this machine + managed cloud deps (Neon / Upstash / CloudAMQP / real SMTP).
+# No secrets here — set via environment (Spring binds SPRING_* / MAIL_FROM automatically).
+#
+#   $env:SPRING_PROFILES_ACTIVE = "local-cloud"
+#   $env:SPRING_DATASOURCE_URL = "jdbc:postgresql://...neon.tech/db?sslmode=require"
+#   $env:SPRING_DATASOURCE_USERNAME = "..."
+#   $env:SPRING_DATASOURCE_PASSWORD = "..."
+#   $env:SPRING_DATA_REDIS_HOST = "....upstash.io"
+#   $env:SPRING_DATA_REDIS_PASSWORD = "..."
+#   $env:SPRING_DATA_REDIS_SSL_ENABLED = "true"
+#   $env:SPRING_RABBITMQ_HOST = "....rmq.cloudamqp.com"
+#   $env:SPRING_RABBITMQ_PORT = "5671"
+#   $env:SPRING_RABBITMQ_USERNAME = "..."
+#   $env:SPRING_RABBITMQ_PASSWORD = "..."
+#   $env:SPRING_RABBITMQ_VIRTUAL_HOST = "..."
+#   $env:SPRING_RABBITMQ_SSL_ENABLED = "true"
+#   $env:SPRING_MAIL_HOST = "smtp.resend.com"
+#   $env:SPRING_MAIL_PORT = "587"
+#   $env:SPRING_MAIL_USERNAME = "..."
+#   $env:SPRING_MAIL_PASSWORD = "..."
+#   $env:MAIL_FROM = "you@domain"
+#   $env:JWT_SECRET = "..."
+#   $env:CORS_ALLOWED_ORIGINS = "http://localhost:3000"
+spring:
+  config:
+    activate:
+      on-profile: local-cloud
+
+  data:
+    redis:
+      ssl:
+        enabled: true
+
+  rabbitmq:
+    ssl:
+      enabled: true
+
+  mail:
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+app:
+  errors:
+    expose-details: true
+
+logging:
+  level:
+    '[com.allan.price_watch]': DEBUG
+
+---
+# Deployed environment — all secrets/hosts from env; fail fast if missing.
 spring:
   config:
     activate:
@@ -164,8 +214,6 @@ spring:
 
 app:
   cors:
-    # Set CORS_ALLOWED_ORIGINS at deploy (comma-separated if multiple).
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
-  # No default — fail fast if JWT_SECRET is missing in real deployments.
   jwt:
     secret: ${JWT_SECRET}

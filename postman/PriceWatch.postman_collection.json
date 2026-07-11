@@ -79,7 +79,31 @@
       }
     },
     {
-      "name": "4 Track Uniqlo product",
+      "name": "4 List Uniqlo variants",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{accessToken}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/products/variants?url=https://www.uniqlo.com/ph/en/products/E471809-000",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "products", "variants"],
+          "query": [
+            {
+              "key": "url",
+              "value": "https://www.uniqlo.com/ph/en/products/E471809-000"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5 Track Uniqlo product (color+size)",
       "event": [
         {
           "listen": "test",
@@ -109,13 +133,13 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"url\": \"https://www.uniqlo.com/ph/en/products/E475378-000\",\n  \"priceThreshold\": null,\n  \"notifyOnRestockOnly\": false\n}"
+          "raw": "{\n  \"url\": \"https://www.uniqlo.com/ph/en/products/E471809-000\",\n  \"colorCode\": \"COL09\",\n  \"sizeCode\": \"SMA004\",\n  \"priceThreshold\": null,\n  \"notifyOnRestockOnly\": false\n}"
         },
         "url": "{{baseUrl}}/api/v1/tracked-items"
       }
     },
     {
-      "name": "5 List tracked items",
+      "name": "6 List tracked items",
       "request": {
         "auth": {
           "type": "bearer",
@@ -129,7 +153,7 @@
       }
     },
     {
-      "name": "6 Get product",
+      "name": "7 Get product",
       "request": {
         "auth": {
           "type": "bearer",
@@ -143,7 +167,7 @@
       }
     },
     {
-      "name": "7 Price history",
+      "name": "8 Price history",
       "request": {
         "auth": {
           "type": "bearer",
@@ -157,7 +181,7 @@
       }
     },
     {
-      "name": "8 Dashboard summary",
+      "name": "9 Dashboard summary",
       "request": {
         "auth": {
           "type": "bearer",
@@ -171,7 +195,7 @@
       }
     },
     {
-      "name": "9 Delete tracked item",
+      "name": "10 Delete tracked item",
       "request": {
         "auth": {
           "type": "bearer",
@@ -186,7 +210,7 @@
       }
     },
     {
-      "name": "10 Refresh token (cookie)",
+      "name": "11 Refresh token (cookie)",
       "event": [
         {
           "listen": "test",

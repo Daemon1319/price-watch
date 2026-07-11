@@ -10,7 +10,7 @@ import com.allan.price_watch.product.entity.StockStatus;
 import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 
-/** API view of a tracked item with embedded product fields. */
+/** API view of a tracked item with embedded product + variant fields. */
 public record TrackedItemResponse(
     UUID id,
     UUID productId,
@@ -20,6 +20,10 @@ public record TrackedItemResponse(
     BigDecimal lastKnownPrice,
     StockStatus lastKnownStockStatus,
     String thumbnailUrl,
+    String colorCode,
+    String colorName,
+    String sizeCode,
+    String sizeName,
     BigDecimal priceThreshold,
     boolean notifyOnRestockOnly,
     TrackedItemStatus status,
@@ -35,6 +39,10 @@ public record TrackedItemResponse(
         product.getLastKnownPrice(),
         product.getLastKnownStockStatus(),
         product.getThumbnailUrl(),
+        product.getColorCode(),
+        product.getColorName(),
+        product.getSizeCode(),
+        product.getSizeName(),
         trackedItem.getPriceThreshold(),
         trackedItem.isNotifyOnRestockOnly(),
         trackedItem.getStatus(),

@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.allan.price_watch.common.web.PageResponse;
 import com.allan.price_watch.product.dto.PriceHistoryResponse;
 import com.allan.price_watch.product.dto.ProductResponse;
+import com.allan.price_watch.product.dto.ProductVariantsResponse;
 
 /** Product read APIs and re-enable checks after repeated scrape failures. */
 @RestController
@@ -26,6 +27,15 @@ public class ProductController {
 
   public ProductController(ProductService productService) {
     this.productService = productService;
+  }
+
+  /**
+   * Lists color/size options for a Uniqlo product URL (no product row created).
+   * Call this before POST /tracked-items so the client can pick a SKU.
+   */
+  @GetMapping("/variants")
+  public ProductVariantsResponse listVariants(@RequestParam String url) {
+    return productService.listVariants(url);
   }
 
   /** Returns product details by id. */

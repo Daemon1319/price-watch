@@ -1,5 +1,7 @@
 # Used by @SpringBootTest and TestPriceWatchApplication (Testcontainers).
 # Disables Docker Compose so tests don't fight your local compose stack.
+# Flyway runs all migrations including V8 product variants; Uniqlo color/size
+# labels load from main classpath:scraper/uniqlo/catalog.json via UniqloCatalog.
 spring:
   docker:
     compose:
@@ -44,3 +46,5 @@ app:
     max-items-per-user: 50
   mail:
     from: pricewatch@localhost
+  cors:
+    allowed-origins: http://localhost:3000

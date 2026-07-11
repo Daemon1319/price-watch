@@ -9,5 +9,15 @@ public record ScrapeResult(
     String name,
     BigDecimal price,
     StockStatus stockStatus,
-    String thumbnailUrl) {
+    String thumbnailUrl,
+    String colorCode,
+    String colorName,
+    String sizeCode,
+    String sizeName) {
+
+  /** Convenience for scrapers that have no variant metadata. */
+  public static ScrapeResult of(
+      String name, BigDecimal price, StockStatus stockStatus, String thumbnailUrl) {
+    return new ScrapeResult(name, price, stockStatus, thumbnailUrl, null, null, null, null);
+  }
 }

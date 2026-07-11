@@ -51,8 +51,9 @@ public class TrackedItemService {
   /** Tracks a URL for the user (scrape first, then insert the subscription). */
   @CacheEvict(value = "dashboardSummary", key = "#userId")
   public TrackedItemResponse create(UUID userId, CreateTrackedItemRequest request) {
-    // Keep the long scrape outside a DB transaction.
-    Product product = productService.findOrCreateByUrl(request.url());
+    // Keep the long scrape outside a DB transaction. Uniqlo requires color+size.
+    Product product = productService.findOrCreateByUrl(
+        request.url(), request.colorCode(), request.sizeCode());
 
     return transactionTemplate.execute(status -> insertTrackedItem(userId, product, request));
   }

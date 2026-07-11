@@ -66,6 +66,7 @@ public class ScrapeResultService {
     if (result.thumbnailUrl() != null && !result.thumbnailUrl().isBlank()) {
       product.setThumbnailUrl(result.thumbnailUrl());
     }
+    applyVariantFields(product, result);
 
     product.setLastKnownPrice(result.price());
     product.setLastKnownStockStatus(result.stockStatus());
@@ -113,6 +114,22 @@ public class ScrapeResultService {
 
     invalidateDashboardCaches(product.getId());
     meterRegistry.counter("scrape.failure", "site", product.getSite().name()).increment();
+  }
+
+  /** Copies color/size codes and display names from a scrape when present. */
+  static void applyVariantFields(Product product, ScrapeResult result) {
+    if (result.colorCode() != null) {
+      product.setColorCode(result.colorCode());
+    }
+    if (result.colorName() != null) {
+      product.setColorName(result.colorName());
+    }
+    if (result.sizeCode() != null) {
+      product.setSizeCode(result.sizeCode());
+    }
+    if (result.sizeName() != null) {
+      product.setSizeName(result.sizeName());
+    }
   }
 
   /** Evicts dashboard summary cache for every user tracking this product. */

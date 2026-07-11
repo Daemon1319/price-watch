@@ -42,7 +42,7 @@ public class NotificationMailService {
   }
 
   private String buildSubject(Product product, OutboxEventType eventType) {
-    String name = product.getName() != null ? product.getName() : product.getNormalizedUrl();
+    String name = displayName(product);
     return switch (eventType) {
       case PRICE_DROP -> "[PriceWatch] Price drop: " + name;
       case RESTOCK -> "[PriceWatch] Back in stock: " + name;
@@ -52,19 +52,60 @@ public class NotificationMailService {
   }
 
   private String buildBody(Product product, OutboxEventType eventType, Map<String, Object> payload) {
-    String name = product.getName() != null ? product.getName() : "A tracked product";
+    String name = displayName(product);
     String url = product.getNormalizedUrl();
+    String variantLine = variantLine(product);
 
     return switch (eventType) {
       case PRICE_DROP -> {
         BigDecimal oldPrice = toBigDecimal(payload.get("oldPrice"));
         BigDecimal newPrice = toBigDecimal(payload.get("newPrice"));
-        yield name + " dropped from ₱" + oldPrice + " to ₱" + newPrice + ".\n\n" + url;
+        yield name + " dropped from ₱" + oldPrice + " to ₱" + newPrice + "."
+            + variantLine + "\n\n" + url;
       }
-      case RESTOCK -> name + " is back in stock.\n\n" + url;
-      case PRICE_INCREASE -> name + " increased in price.\n\n" + url;
-      case OUT_OF_STOCK -> name + " is now out of stock.\n\n" + url;
+      case RESTOCK -> name + " is back in stock." + variantLine + "\n\n" + url;
+      case PRICE_INCREASE -> name + " increased in price." + variantLine + "\n\n" + url;
+      case OUT_OF_STOCK -> name + " is now out of stock." + variantLine + "\n\n" + url;
     };
+  }
+
+  /** Product name plus human-readable color/size when known. */
+  private static String displayName(Product product) {
+    String name = product.getName() != null ? product.getName() : product.getNormalizedUrl();
+    String color = product.getColorName() != null ? product.getColorName() : product.getColorCode();
+    String size = product.getSizeName() != null ? product.getSizeName() : product.getSizeCode();
+    if (color == null && size == null) {
+      return name;
+    }
+    if (color != null && size != null) {
+      return name + " (" + color + " / " + size + ")";
+    }
+    return name + " (" + (color != null ? color : size) + ")";
+  }
+
+  private static String variantLine(Product product) {
+    String color = product.getColorName() != null ? product.getColorName() : product.getColorCode();
+    String size = product.getSizeName() != null ? product.getSizeName() : product.getSizeCode();
+    if (color == null && size == null) {
+      return "";
+    }
+    StringBuilder line = new StringBuilder("\nVariant: ");
+    if (color != null) {
+      line.append(color);
+      if (product.getColorCode() != null && product.getColorName() != null) {
+        line.append(" [").append(product.getColorCode()).append(']');
+      }
+    }
+    if (size != null) {
+      if (color != null) {
+        line.append(" · ");
+      }
+      line.append(size);
+      if (product.getSizeCode() != null && product.getSizeName() != null) {
+        line.append(" [").append(product.getSizeCode()).append(']');
+      }
+    }
+    return line.toString();
   }
 
   private static BigDecimal toBigDecimal(Object value) {
