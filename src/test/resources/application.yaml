@@ -1,0 +1,46 @@
+# Used by @SpringBootTest and TestPriceWatchApplication (Testcontainers).
+# Disables Docker Compose so tests don't fight your local compose stack.
+spring:
+  docker:
+    compose:
+      enabled: false
+  profiles:
+    default: test
+  mail:
+    host: localhost
+    port: 1025
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+# Explicit here so scheduled beans always resolve, even if property loading
+# order is weird under the test main entrypoint.
+app:
+  jwt:
+    secret: dGVzdC1zZWNyZXQtdGhhdC1pcy1sb25nLWVub3VnaC0zMmJ5dGVzISE=
+    access-token-ttl: 15m
+  auth:
+    refresh-cookie:
+      name: pw_refresh
+      path: /api/v1/auth
+      max-age-days: 7
+      same-site: None
+      secure: true
+  scheduler:
+    product-check-cron: "0 0 */4 * * *"
+  outbox:
+    poll-interval-ms: 5000
+    batch-size: 50
+  rate-limit:
+    capacity: 60
+    refill-per-minute: 60
+    auth-capacity: 10
+    auth-refill-per-minute: 10
+    trust-forwarded-headers: false
+  tracking:
+    max-items-per-user: 50
+  mail:
+    from: pricewatch@localhost
