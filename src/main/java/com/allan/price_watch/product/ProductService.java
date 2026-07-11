@@ -24,6 +24,7 @@ import com.allan.price_watch.trackeditem.entity.PriceHistory;
 import com.allan.price_watch.trackeditem.repository.PriceHistoryRepository;
 import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
 
+/** Looks up products by URL, creates them from a first scrape, and serves reads. */
 @Service
 public class ProductService {
 
@@ -49,10 +50,7 @@ public class ProductService {
     this.transactionTemplate = transactionTemplate;
   }
 
-  /**
-   * Dedup + first-fetch. New URLs scrape outside a DB transaction, then persist.
-   * Thumbnail is the Uniqlo CDN URL from the scraper (no MinIO / no expiry).
-   */
+  /** Returns an existing product for the URL, or scrapes and creates one. */
   public Product findOrCreateByUrl(String rawUrl) {
     String normalizedUrl;
     URI uri;
@@ -67,12 +65,14 @@ public class ProductService {
         .orElseGet(() -> createFromScrape(rawUrl, normalizedUrl, uri));
   }
 
+  /** Loads a product by id for API responses. */
   public ProductResponse getById(UUID id) {
     return productRepository.findById(id)
         .map(ProductResponse::from)
         .orElseThrow(() -> new ResourceNotFoundException("No product found with id " + id));
   }
 
+  /** Paged price history for a product, optionally filtered by time range. */
   public Page<PriceHistoryResponse> getPriceHistory(UUID productId, Instant from, Instant to, Pageable pageable) {
     if (!productRepository.existsById(productId)) {
       throw new ResourceNotFoundException("No product found with id " + productId);
@@ -86,6 +86,7 @@ public class ProductService {
     return page.map(PriceHistoryResponse::from);
   }
 
+  /** Resets consecutive scrape failures so the scheduler resumes checks. */
   @Transactional
   public ProductResponse reenableChecks(UUID userId, UUID productId) {
     if (!trackedItemRepository.existsByUserIdAndProductId(userId, productId)) {
@@ -99,6 +100,7 @@ public class ProductService {
     return ProductResponse.from(product);
   }
 
+  /** Scrapes a new URL outside a TX, then persists product + first price point. */
   private Product createFromScrape(String originalUrl, String normalizedUrl, URI uri) {
     Scraper scraper = scraperFactory.resolve(uri);
     ScrapeResult result = scraper.fetch(uri);
@@ -107,6 +109,7 @@ public class ProductService {
       return transactionTemplate.execute(
           status -> persistNewProduct(originalUrl, normalizedUrl, scraper, result));
     } catch (DataIntegrityViolationException e) {
+      // Concurrent first-track for the same URL — return the winner.
       return productRepository.findByNormalizedUrl(normalizedUrl)
           .orElseThrow(() -> e);
     }

@@ -18,22 +18,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 
-/**
- * Every error response from this API is an RFC 9457 {@code ProblemDetail}
- * ({@code application/problem+json}) — see the REST endpoint reference doc.
- * Three handlers cover everything:
- *
- * <ul>
- *   <li>{@link ApplicationException} — any intentional app-level rejection
- *       (see its Javadoc). New exception types just extend it; this class
- *       never needs a new method for them.</li>
- *   <li>{@link MethodArgumentNotValidException} — {@code @Valid} failures
- *       on request bodies, with per-field messages attached.</li>
- *   <li>{@link Exception} — the catch-all for anything unexpected. The
- *       client only ever sees a generic message here; the real exception
- *       is logged server-side, never serialized into the response.</li>
- * </ul>
- */
+/** Maps exceptions to RFC 9457 ProblemDetail responses. */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -46,6 +31,7 @@ public class GlobalExceptionHandler {
     this.exposeErrorDetails = exposeErrorDetails;
   }
 
+  /** Handles intentional app/business exceptions. */
   @ExceptionHandler(ApplicationException.class)
   public ProblemDetail handleApplicationException(ApplicationException ex, WebRequest request) {
     ProblemDetail problem = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getMessage());
@@ -55,6 +41,7 @@ public class GlobalExceptionHandler {
     return problem;
   }
 
+  /** Handles @Valid request-body validation failures with field errors. */
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ProblemDetail handleValidationException(MethodArgumentNotValidException ex, WebRequest request) {
     ProblemDetail problem = ProblemDetail.forStatusAndDetail(
@@ -72,10 +59,7 @@ public class GlobalExceptionHandler {
     return problem;
   }
 
-  /**
-   * Missing / unreadable JSON body (common Postman misconfig: no Body tab,
-   * form-data instead of raw JSON, or Content-Type wrong).
-   */
+  /** Handles missing or malformed JSON request bodies. */
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ProblemDetail handleUnreadableBody(HttpMessageNotReadableException ex, WebRequest request) {
     log.warn("Unreadable request body on {}: {}", requestPath(request), ex.getMessage());
@@ -89,6 +73,7 @@ public class GlobalExceptionHandler {
     return problem;
   }
 
+  /** Handles unique-constraint and similar DB integrity conflicts. */
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ProblemDetail handleDataIntegrity(DataIntegrityViolationException ex, WebRequest request) {
     log.warn("Data integrity violation on {}: {}", requestPath(request), ex.getMostSpecificCause().getMessage());
@@ -100,6 +85,7 @@ public class GlobalExceptionHandler {
     return problem;
   }
 
+  /** Catch-all for unexpected errors (generic client message). */
   @ExceptionHandler(Exception.class)
   public ProblemDetail handleUnexpectedException(Exception ex, WebRequest request) {
     log.error("Unhandled exception on {}", requestPath(request), ex);
@@ -109,7 +95,6 @@ public class GlobalExceptionHandler {
     problem.setTitle("Internal Server Error");
     problem.setInstance(URI.create(requestPath(request)));
     problem.setProperty("timestamp", Instant.now());
-    // Local only: show the real exception so Postman debugging is possible.
     if (exposeErrorDetails) {
       problem.setProperty("exception", ex.getClass().getSimpleName());
       problem.setProperty("message", ex.getMessage());
@@ -118,7 +103,6 @@ public class GlobalExceptionHandler {
   }
 
   private String requestPath(WebRequest request) {
-    // WebRequest#getDescription(false) returns "uri=/api/v1/...".
     return request.getDescription(false).replace("uri=", "");
   }
 }

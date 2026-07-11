@@ -1,11 +1,6 @@
 package com.allan.price_watch.product;
 
-/**
- * Shared health thresholds for products. Scrapes increment
- * {@code consecutive_failures}; once the count reaches this threshold the
- * product is treated as UNHEALTHY — the scheduler stops enqueueing checks
- * until something (manual ops / future admin endpoint) resets the counter.
- */
+/** Shared threshold for when a product is considered unhealthy for scraping. */
 public final class ProductHealth {
 
   public static final int UNHEALTHY_FAILURE_THRESHOLD = 5;
@@ -13,6 +8,7 @@ public final class ProductHealth {
   private ProductHealth() {
   }
 
+  /** True if consecutive failures are still below the unhealthy cutoff. */
   public static boolean isHealthy(int consecutiveFailures) {
     return consecutiveFailures < UNHEALTHY_FAILURE_THRESHOLD;
   }

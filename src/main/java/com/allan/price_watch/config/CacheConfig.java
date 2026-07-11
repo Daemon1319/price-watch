@@ -14,26 +14,16 @@ import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializ
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
-/**
- * Explicit Redis {@link CacheManager}. Spring Boot 4 does not always auto-
- * create one just from {@code spring-boot-starter-data-redis} +
- * {@code @EnableCaching}, and {@code ScrapeResultService} injects
- * {@code CacheManager} directly for dashboard eviction after scrapes.
- *
- * <p>Value serializer uses Spring Data Redis 4's Jackson 3 builder
- * ({@link GenericJacksonJsonRedisSerializer#builder()}) — there is no
- * no-arg constructor on this class anymore.
- */
+/** Redis-backed Spring Cache setup for dashboard summaries and similar. */
 @Configuration
 @EnableCaching
 public class CacheConfig {
 
+  /** Default Redis cache config: TTL, string keys, Jackson JSON values. */
   @Bean
   public RedisCacheConfiguration redisCacheConfiguration(
       @Value("${spring.cache.redis.time-to-live:10m}") Duration ttl) {
 
-    // Default typing so @Cacheable can round-trip DTOs (not just LinkedHashMap).
-    // enableSpringCacheNullValueSupport matches Spring Cache's NullValue marker.
     GenericJacksonJsonRedisSerializer valueSerializer = GenericJacksonJsonRedisSerializer.builder()
         .enableSpringCacheNullValueSupport()
         .enableUnsafeDefaultTyping()

@@ -14,28 +14,18 @@ import com.allan.price_watch.auth.entity.RefreshToken;
 
 import jakarta.persistence.LockModeType;
 
-/**
- * Lookups are always by {@code tokenHash}, never by {@code id} — the refresh
- * flow and logout both start from the raw token the client sent, which the
- * caller hashes before reaching this repository. See the note on
- * {@code RefreshToken.tokenHash} for why the raw token is never stored.
- */
+/** Lookup and revoke helpers for hashed refresh tokens. */
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID> {
 
+  /** Finds a refresh token row by its stored hash. */
   Optional<RefreshToken> findByTokenHash(String tokenHash);
 
-  /**
-   * Exclusive row lock for refresh rotation so two concurrent refresh calls
-   * with the same token cannot both mint a new pair.
-   */
+  /** Same as findByTokenHash, with a pessimistic write lock for rotation. */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select rt from RefreshToken rt where rt.tokenHash = :tokenHash")
   Optional<RefreshToken> findByTokenHashForUpdate(@Param("tokenHash") String tokenHash);
 
-  /**
-   * Steal / reuse detection: revoke every still-active refresh token for a
-   * user when a previously rotated token is presented again.
-   */
+  /** Revokes every still-active refresh token for a user (reuse detection). */
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query("""
       update RefreshToken rt

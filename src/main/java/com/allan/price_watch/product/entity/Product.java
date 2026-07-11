@@ -19,23 +19,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * A tracked product page, shared across every user who tracks it — this is
- * the deduplicated "one row per normalized URL" resource described in plan
- * §5. Per-user preferences (threshold, restock-only, active/paused) live on
- * {@code TrackedItem} instead, not here.
- *
- * <p>{@code id}, {@code createdAt}, and {@code updatedAt} are database-
- * generated (see {@code V1__init_schema.sql}), same pattern as {@code User}.
- * {@code consecutiveFailures} is intentionally plain and app-managed — the
- * scrape worker increments/resets it directly, there's no DB-side logic for
- * it beyond the partial index that speeds up querying for unhealthy rows.
- *
- * <p>{@code name} (added in {@code V5__add_product_name.sql}) is nullable —
- * a scrape can successfully extract price/stock while failing to find a
- * clean title. Callers should fall back to displaying {@code normalizedUrl}
- * when it's null, not treat a missing name as an error.
- */
+/** Shared product row (one per normalized URL) with latest scrape state. */
 @Entity
 @Table(name = "products")
 @Getter

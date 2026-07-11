@@ -25,13 +25,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * One append-only price/stock observation for a {@link Product}, written by
- * the scrape worker whenever a check detects a change (plan §5, step 3d).
- * Rows are never updated or deleted through the app, only inserted — hence
- * no {@code updatedAt} field at all, and {@code recordedAt} only needs
- * {@code EventType.INSERT}.
- */
+/** Append-only price/stock snapshot for a product. */
 @Entity
 @Table(name = "price_history")
 @Getter

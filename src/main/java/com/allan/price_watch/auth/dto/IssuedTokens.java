@@ -1,9 +1,6 @@
 package com.allan.price_watch.auth.dto;
 
-/**
- * Internal login/refresh result: access JWT for the body, raw refresh for the
- * HttpOnly cookie (never log this value).
- */
+/** Internal token pair from login/register/refresh (raw refresh goes in the cookie). */
 public record IssuedTokens(
     String accessToken,
     String rawRefreshToken,

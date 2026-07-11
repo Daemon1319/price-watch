@@ -11,13 +11,10 @@ import org.springframework.data.repository.query.Param;
 
 import com.allan.price_watch.notification.entity.OutboxEvent;
 
+/** Queries for outbox relay and dashboard price-drop history. */
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
-  /**
-   * Outbox relay poll (plan §5 step 4): oldest unpublished first, batch size
-   * via {@code Pageable}. Join-fetch product so relay can read product id
-   * without an N+1. Matches partial index {@code outbox_events_unpublished_idx}.
-   */
+  /** Oldest unpublished events for the outbox relay poll. */
   @Query("""
       select oe from OutboxEvent oe
       join fetch oe.product
@@ -26,7 +23,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
       """)
   List<OutboxEvent> findByPublishedAtIsNullOrderByCreatedAtAsc(Pageable pageable);
 
-  /** Reload one event with product for per-event outbox publish. */
+  /** Reloads one event with product for publish-and-mark. */
   @Query("""
       select oe from OutboxEvent oe
       join fetch oe.product
@@ -34,15 +31,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
       """)
   java.util.Optional<OutboxEvent> findByIdWithProduct(@Param("id") UUID id);
 
-  /**
-   * Backs {@code recentPriceDrops} on GET /dashboard/summary.
-   * {@code join fetch oe.product} avoids an N+1 when
-   * {@code DashboardService} reads {@code product.getName()} off each
-   * result — without it, every entry in the list would trigger its own
-   * lazy-load query. The subquery scopes results to products this
-   * specific user tracks, same reasoning as
-   * {@code TrackedItemRepository}'s unhealthy-count query.
-   */
+  /** Recent price drops for products the user tracks. */
   @Query("""
       select oe from OutboxEvent oe
       join fetch oe.product p

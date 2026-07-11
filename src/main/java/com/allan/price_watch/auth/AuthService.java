@@ -26,22 +26,7 @@ import com.allan.price_watch.common.exception.InvalidCredentialsException;
 import com.allan.price_watch.common.exception.InvalidRefreshTokenException;
 import com.allan.price_watch.security.JwtService;
 
-/**
- * Refresh tokens issued here are opaque random strings, not JWTs — see the
- * note on {@code RefreshToken}/{@code JwtService} for why. This class is
- * also where refresh token <b>rotation</b> happens: every successful
- * {@code /auth/refresh} call revokes the token it was given and issues a
- * brand new pair, rather than reusing the same refresh token until it
- * naturally expires.
- *
- * <p>Presenting a <em>already-revoked</em> refresh token triggers reuse
- * detection: every still-active refresh session for that user is revoked.
- * That way a stolen-and-already-rotated token cannot keep a parallel
- * session alive after the legitimate client rotated past it.
- *
- * <p>The raw refresh string is returned only so the controller can put it in
- * an HttpOnly cookie — it is not meant to be stored in browser JS.
- */
+/** Handles registration, login, refresh rotation, and logout. */
 @Service
 public class AuthService {
 
@@ -64,6 +49,7 @@ public class AuthService {
     this.jwtService = jwtService;
   }
 
+  /** Creates a new user and returns an access/refresh token pair. */
   @Transactional
   public IssuedTokens register(RegisterRequest request) {
     String email = request.email().toLowerCase();
@@ -78,11 +64,10 @@ public class AuthService {
         .build();
 
     try {
-      // saveAndFlush so Postgres uuidv7() is written + reloaded into user.id
-      // before we mint a JWT that needs the id as subject.
+      // Flush so Postgres generates user.id before we mint a JWT subject.
       user = userRepository.saveAndFlush(user);
     } catch (DataIntegrityViolationException e) {
-      // Race: two concurrent registers with the same email.
+      // Concurrent register with the same email.
       throw new EmailAlreadyRegisteredException();
     }
 
@@ -93,13 +78,12 @@ public class AuthService {
     return issueTokenPair(user);
   }
 
+  /** Authenticates credentials and returns a fresh token pair. */
   @Transactional
   public IssuedTokens login(LoginRequest request) {
     String email = request.email().toLowerCase();
 
-    // Same exception whether the email doesn't exist or the password is
-    // wrong — telling those two apart in the response would let an
-    // attacker enumerate registered emails one guess at a time.
+    // Same error for bad email or password to avoid email enumeration.
     User user = userRepository.findByEmailIgnoreCase(email)
         .orElseThrow(InvalidCredentialsException::new);
 
@@ -110,22 +94,19 @@ public class AuthService {
     return issueTokenPair(user);
   }
 
+  /** Rotates a valid refresh token into a new access/refresh pair. */
   @Transactional
   public IssuedTokens refresh(String rawRefreshToken) {
     if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
       throw new InvalidRefreshTokenException();
     }
 
-    // Pessimistic lock: concurrent refresh with the same raw token must not
-    // both pass "still valid" and both issue a new pair.
+    // Lock the row so concurrent refresh cannot double-issue.
     RefreshToken existing = refreshTokenRepository
         .findByTokenHashForUpdate(hash(rawRefreshToken))
         .orElseThrow(InvalidRefreshTokenException::new);
 
-    // Reuse of an already-rotated (or logout-revoked) token is a strong signal
-    // the token was stolen and both the legitimate client and the thief are
-    // racing. Kill every active refresh session for this user so neither side
-    // can keep minting access tokens without logging in again.
+    // Reused revoked token → revoke all sessions for this user.
     if (existing.getRevokedAt() != null) {
       refreshTokenRepository.revokeAllActiveForUser(existing.getUser().getId(), Instant.now());
       throw new InvalidRefreshTokenException();
@@ -141,25 +122,21 @@ public class AuthService {
     return issueTokenPair(existing.getUser());
   }
 
+  /** Revokes the caller's refresh token if it is still valid (idempotent). */
   @Transactional
   public void logout(UUID userId, String rawRefreshToken) {
     if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
       return;
     }
-    // Scoped to the calling user, not just the token hash — stops one
-    // user from revoking a token that happens to belong to someone else
-    // (defense in depth; a correct client would never send another
-    // user's token, but the check costs nothing to add).
     refreshTokenRepository.findByTokenHash(hash(rawRefreshToken))
         .filter(rt -> rt.getUser().getId().equals(userId))
         .ifPresent(rt -> {
           rt.setRevokedAt(Instant.now());
           refreshTokenRepository.save(rt);
         });
-    // No exception if the token is already gone/invalid — logout is
-    // idempotent from the client's point of view either way.
   }
 
+  /** Mints a short-lived JWT access token plus a new opaque refresh token. */
   private IssuedTokens issueTokenPair(User user) {
     String accessToken = jwtService.generateAccessToken(user.getId(), user.getEmail());
 
@@ -174,29 +151,20 @@ public class AuthService {
     return new IssuedTokens(accessToken, rawRefreshToken, jwtService.getAccessTokenTtlSeconds());
   }
 
-  /** 32 random bytes, URL-safe Base64 — not a JWT, not decodable as one. */
+  /** Builds a high-entropy opaque refresh token (not a JWT). */
   private String generateOpaqueToken() {
     byte[] bytes = new byte[32];
     secureRandom.nextBytes(bytes);
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
   }
 
-  /**
-   * SHA-256, deliberately not bcrypt/Argon2 — refresh tokens are already
-   * 256 bits of {@code SecureRandom} entropy, not user-chosen secrets, so
-   * there's no brute-forceable keyspace to slow an attacker down against.
-   * A fast cryptographic hash is the right tool here; an adaptive one
-   * would just waste CPU on every refresh/logout call for no security
-   * benefit.
-   */
+  /** Hashes a refresh token with SHA-256 before storage or lookup. */
   private String hash(String rawToken) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       byte[] hashBytes = digest.digest(rawToken.getBytes(StandardCharsets.UTF_8));
       return Base64.getEncoder().encodeToString(hashBytes);
     } catch (NoSuchAlgorithmException e) {
-      // SHA-256 is guaranteed available on every JVM per the Java
-      // Cryptography Architecture spec — this branch is unreachable.
       throw new IllegalStateException(e);
     }
   }

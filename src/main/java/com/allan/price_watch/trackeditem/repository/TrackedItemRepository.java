@@ -15,62 +15,36 @@ import org.springframework.data.repository.query.Param;
 import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 
-/**
- * Every lookup here is scoped by {@code userId} — a tracked item's UUID
- * alone is never enough to fetch it. This is what stops one user from
- * reading, editing, or deleting another user's subscription just by
- * guessing or reusing an id; it's the actual authorization boundary for
- * this resource, enforced at the query level rather than left to the
- * controller/service to remember.
- */
+/** User-scoped queries for tracked-item subscriptions. */
 public interface TrackedItemRepository extends JpaRepository<TrackedItem, UUID> {
 
-  /** Always fetch product — responses need price/name and open-in-view is off. */
+  /** Paged list of a user's tracked items with product loaded. */
   @EntityGraph(attributePaths = "product")
   Page<TrackedItem> findByUserId(UUID userId, Pageable pageable);
 
-  /**
-   * Unpaged overload, used by {@code DashboardService} to build an
-   * in-memory {@code productId -> trackedItemId} lookup for this user in
-   * one query, rather than N+1 queries while mapping recent price-drop
-   * events back to the specific {@code TrackedItem} each one belongs to.
-   * Safe to leave unpaged here specifically because it's scoped to one
-   * user's own tracked items, which stays small (tens, not thousands) —
-   * this is not a pattern to repeat for anything system-wide.
-   */
+  /** All tracked items for a user (dashboard lookups). */
   @EntityGraph(attributePaths = "product")
   List<TrackedItem> findByUserId(UUID userId);
 
+  /** Paged list filtered by status. */
   @EntityGraph(attributePaths = "product")
   Page<TrackedItem> findByUserIdAndStatusIn(
       UUID userId, Collection<TrackedItemStatus> statuses, Pageable pageable);
 
+  /** Ownership-safe fetch by tracked-item id and user id. */
   @EntityGraph(attributePaths = "product")
   Optional<TrackedItem> findByIdAndUserId(UUID id, UUID userId);
 
-  /** Dedup check backing the {@code 409} response on POST /tracked-items. */
+  /** True if the user already tracks this product. */
   boolean existsByUserIdAndProductId(UUID userId, UUID productId);
 
-  /** Backs {@code totalTrackedItems} on GET /dashboard/summary. */
+  /** Count of items tracked by the user. */
   long countByUserId(UUID userId);
 
-  /**
-   * Backs {@code unhealthyCount} on GET /dashboard/summary —
-   * {@code Product_ConsecutiveFailures} traverses the {@code product}
-   * association's {@code consecutiveFailures} field, Spring Data resolves
-   * that path automatically from the method name. Deliberately scoped to
-   * this user's own tracked products, not a global count across every
-   * product in the system — a global count would leak information about
-   * (and isn't actionable for) products this user never chose to track.
-   */
+  /** Count of the user's products past the unhealthy failure threshold. */
   long countByUserIdAndProduct_ConsecutiveFailuresGreaterThanEqual(UUID userId, int threshold);
 
-  /**
-   * Drives {@code ProductCheckScheduler} — every healthy product with at
-   * least one {@code ACTIVE} tracker gets a {@code product.check} job.
-   * {@code maxFailures} should be {@link com.allan.price_watch.product.ProductHealth#UNHEALTHY_FAILURE_THRESHOLD}.
-   * {@code distinct} so a product tracked by many users is still scraped once.
-   */
+  /** Distinct healthy products with at least one ACTIVE tracker (scheduler). */
   @Query("""
       select distinct ti.product.id from TrackedItem ti
       where ti.status = com.allan.price_watch.trackeditem.entity.TrackedItemStatus.ACTIVE
@@ -78,10 +52,7 @@ public interface TrackedItemRepository extends JpaRepository<TrackedItem, UUID> 
       """)
   List<UUID> findDistinctActiveHealthyProductIds(@Param("maxFailures") int maxFailures);
 
-  /**
-   * Active subscriptions for a product, with user loaded for notification
-   * email. Used by {@code NotificationWorker}.
-   */
+  /** Active trackers for a product, with user loaded for email delivery. */
   @Query("""
       select ti from TrackedItem ti
       join fetch ti.user
@@ -90,7 +61,7 @@ public interface TrackedItemRepository extends JpaRepository<TrackedItem, UUID> 
       """)
   List<TrackedItem> findActiveByProductIdWithUser(@Param("productId") UUID productId);
 
-  /** User ids tracking a product — for dashboard cache invalidation after scrapes. */
+  /** User ids tracking a product (dashboard cache invalidation). */
   @Query("select ti.user.id from TrackedItem ti where ti.product.id = :productId")
   List<UUID> findUserIdsByProductId(@Param("productId") UUID productId);
 }

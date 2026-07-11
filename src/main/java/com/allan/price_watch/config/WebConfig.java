@@ -10,15 +10,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
-/**
- * Browser SPA (Next.js) runs on a different origin than this API. Origins come
- * from {@code app.cors.allowed-origins} — local is hard-coded in
- * {@code application.yaml}; prod is {@code ${CORS_ALLOWED_ORIGINS}} at deploy.
- *
- * <p>{@code allowCredentials=true} is required so the SPA can send/receive the
- * HttpOnly refresh cookie via {@code fetch(..., { credentials: "include" })}.
- * Allowed origins must be explicit (never {@code *}) when credentials are on.
- */
+/** CORS config so the SPA can call the API with credentials. */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({
     WebConfig.CorsProperties.class,
@@ -26,6 +18,7 @@ import org.springframework.web.filter.CorsFilter;
 })
 public class WebConfig {
 
+  /** Builds a CorsFilter from app.cors.allowed-origins. */
   @Bean
   public CorsFilter corsFilter(CorsProperties props) {
     CorsConfiguration config = new CorsConfiguration();
@@ -38,7 +31,7 @@ public class WebConfig {
     config.setAllowCredentials(true);
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of("*"));
-    // SPA reads Retry-After on 429 to drive cooldown UI (otherwise browser hides it).
+    // Expose Retry-After so the SPA can show 429 cooldown UI.
     config.setExposedHeaders(List.of("Retry-After"));
 
     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

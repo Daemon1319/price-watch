@@ -2,6 +2,7 @@ package com.allan.price_watch.common.exception;
 
 import org.springframework.http.HttpStatus;
 
+/** 403 when the user hits the max tracked-items cap. */
 public class TrackingLimitExceededException extends ApplicationException {
 
   public TrackingLimitExceededException(int maxItems) {

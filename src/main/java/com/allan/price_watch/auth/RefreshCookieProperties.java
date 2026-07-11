@@ -2,11 +2,7 @@ package com.allan.price_watch.auth;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-/**
- * HttpOnly refresh-token cookie. Cross-origin SPA (e.g. Next on :3000, API on
- * :8080) needs {@code same-site=none} and {@code secure=true} so the browser
- * attaches the cookie on credentialed {@code fetch} calls.
- */
+/** Settings for the HttpOnly refresh-token cookie. */
 @ConfigurationProperties("app.auth.refresh-cookie")
 public record RefreshCookieProperties(
     String name,

@@ -2,6 +2,7 @@ package com.allan.price_watch.common.exception;
 
 import org.springframework.http.HttpStatus;
 
+/** 404 when a tracked item is missing or not owned by the user. */
 public class TrackedItemNotFoundException extends ApplicationException {
 
   public TrackedItemNotFoundException() {

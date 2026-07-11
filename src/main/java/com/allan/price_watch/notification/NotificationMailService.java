@@ -13,12 +13,7 @@ import org.springframework.stereotype.Service;
 import com.allan.price_watch.notification.entity.OutboxEventType;
 import com.allan.price_watch.product.entity.Product;
 
-/**
- * Thin wrapper around Spring Mail so the worker stays free of message-
- * construction details. For local profile, point {@code spring.mail.*} at
- * MailHog (see compose.yaml) — messages are accepted and viewable in the
- * UI without a real SMTP provider.
- */
+/** Builds and sends price-drop / restock notification emails. */
 @Service
 public class NotificationMailService {
 
@@ -34,6 +29,7 @@ public class NotificationMailService {
     this.fromAddress = fromAddress;
   }
 
+  /** Sends one notification email for the product event. */
   public void send(String toEmail, Product product, OutboxEventType eventType, Map<String, Object> payload) {
     SimpleMailMessage message = new SimpleMailMessage();
     message.setFrom(fromAddress);

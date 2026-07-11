@@ -21,22 +21,7 @@ import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import static com.allan.price_watch.config.RabbitMqConfig.EXCHANGE;
 import static com.allan.price_watch.config.RabbitMqConfig.NOTIFICATION_SEND_QUEUE;
 
-/**
- * Polls unpublished {@code outbox_events} rows and publishes each one to
- * the {@code notification.send} queue, then marks {@code published_at}.
- * This is the second half of the transactional outbox pattern: the scrape
- * path only writes the outbox row (same TX as price history); this relay
- * is what actually gets the event onto RabbitMQ so a crash mid-scrape
- * never loses a "price changed" signal.
- *
- * <p>Each event is handled in its own short DB transaction (publish then
- * mark) so a mid-batch Rabbit failure does not roll back
- * {@code published_at} for events already successfully published — which
- * would re-publish the whole batch and amplify duplicate emails.
- *
- * <p>Publish-then-mark still means at-least-once if we die between the two
- * steps — safer than mark-then-publish (which can silently drop).
- */
+/** Polls unpublished outbox rows and publishes them to the notification queue. */
 @Component
 public class OutboxRelay {
 
@@ -58,6 +43,7 @@ public class OutboxRelay {
     this.batchSize = batchSize;
   }
 
+  /** Relays a batch of unpublished outbox events to RabbitMQ. */
   @Scheduled(fixedDelayString = "${app.outbox.poll-interval-ms:5000}")
   @SchedulerLock(name = "outboxRelay", lockAtLeastFor = "PT2S", lockAtMostFor = "PT1M")
   public void relay() {
@@ -75,7 +61,7 @@ public class OutboxRelay {
         relayed++;
       } catch (RuntimeException e) {
         log.warn("Failed to relay outbox event {}: {}", event.getId(), e.getMessage());
-        // Stop this tick; ShedLock + next poll will retry remaining rows.
+        // Stop this tick; next poll retries remaining rows.
         break;
       }
     }
@@ -85,8 +71,8 @@ public class OutboxRelay {
     }
   }
 
+  /** Publishes one event and marks it published if still unpublished. */
   private void publishAndMark(OutboxEvent event) {
-    // Re-load so we only mark if still unpublished (concurrent relays).
     OutboxEvent fresh = outboxEventRepository.findByIdWithProduct(event.getId()).orElse(null);
     if (fresh == null || fresh.getPublishedAt() != null) {
       return;

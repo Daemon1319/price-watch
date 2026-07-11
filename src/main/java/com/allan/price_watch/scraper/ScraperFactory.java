@@ -7,11 +7,7 @@ import org.springframework.stereotype.Component;
 
 import com.allan.price_watch.common.exception.UnsupportedSiteException;
 
-/**
- * Resolves a {@link Scraper} for a product URL. Spring injects every
- * {@code Scraper} bean on the classpath. Adding a storefront is additive:
- * implement {@code Scraper}, no change to this class.
- */
+/** Picks the Scraper bean that supports a given product URL. */
 @Component
 public class ScraperFactory {
 
@@ -21,6 +17,7 @@ public class ScraperFactory {
     this.scrapers = scrapers;
   }
 
+  /** Returns the matching scraper, or throws if the site is unsupported. */
   public Scraper resolve(URI url) {
     return scrapers.stream()
         .filter(scraper -> scraper.supports(url))

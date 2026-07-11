@@ -10,11 +10,7 @@ import com.allan.price_watch.product.entity.StockStatus;
 import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 
-/**
- * Flattens {@code TrackedItem} + its {@code Product} into one response.
- * Prefer {@link #from(TrackedItem, Product)} when you already have a fully
- * loaded product (avoids LazyInitializationException after scrape TX).
- */
+/** API view of a tracked item with embedded product fields. */
 public record TrackedItemResponse(
     UUID id,
     UUID productId,

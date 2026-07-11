@@ -25,23 +25,7 @@ import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
 
-/**
- * Owns the per-user subscription lifecycle. Product lookup/creation is
- * deliberately delegated to {@link ProductService} — this class shouldn't
- * need to know how URL normalization, site detection, or the initial
- * scrape work, only that "give me a Product for this URL, creating it if
- * needed" is a single call away.
- *
- * <p>{@code create} intentionally does <strong>not</strong> wrap the HTTP
- * scrape in a DB transaction: {@code findOrCreateByUrl} may take seconds
- * on Uniqlo. Only the short tracked-item insert runs in a TX so we don't
- * hold a JDBC connection open during network I/O or poison the outer TX
- * when a concurrent first-track races on {@code products.normalized_url}.
- *
- * <p>Mutations evict {@code dashboardSummary} for the user so the dashboard
- * count does not stay stale for the Redis cache TTL (scrapes already evict
- * via {@code ScrapeResultService}).
- */
+/** Owns create/list/update/delete of a user's product subscriptions. */
 @Service
 public class TrackedItemService {
 
@@ -64,14 +48,16 @@ public class TrackedItemService {
     this.maxItemsPerUser = maxItemsPerUser;
   }
 
+  /** Tracks a URL for the user (scrape first, then insert the subscription). */
   @CacheEvict(value = "dashboardSummary", key = "#userId")
   public TrackedItemResponse create(UUID userId, CreateTrackedItemRequest request) {
-    // Scrape / product dedup outside any TX (may take seconds).
+    // Keep the long scrape outside a DB transaction.
     Product product = productService.findOrCreateByUrl(request.url());
 
     return transactionTemplate.execute(status -> insertTrackedItem(userId, product, request));
   }
 
+  /** Inserts a tracked item with limit and duplicate checks. */
   private TrackedItemResponse insertTrackedItem(
       UUID userId, Product product, CreateTrackedItemRequest request) {
     if (trackedItemRepository.existsByUserIdAndProductId(userId, product.getId())) {
@@ -94,13 +80,14 @@ public class TrackedItemService {
     try {
       trackedItem = trackedItemRepository.saveAndFlush(trackedItem);
     } catch (DataIntegrityViolationException e) {
-      // Concurrent POST for the same user+product lost the race on the unique index.
+      // Concurrent create for the same user+product.
       throw new DuplicateTrackingException();
     }
 
     return TrackedItemResponse.from(trackedItem, product);
   }
 
+  /** Lists the user's tracked items, optionally filtered by status. */
   @Transactional(readOnly = true)
   public Page<TrackedItemResponse> list(UUID userId, Collection<TrackedItemStatus> statuses, Pageable pageable) {
     Page<TrackedItem> page = (statuses == null || statuses.isEmpty())
@@ -110,11 +97,13 @@ public class TrackedItemService {
     return page.map(TrackedItemResponse::from);
   }
 
+  /** Returns one tracked item owned by the user. */
   @Transactional(readOnly = true)
   public TrackedItemResponse get(UUID userId, UUID id) {
     return TrackedItemResponse.from(findOwned(userId, id));
   }
 
+  /** Patches threshold, restock-only flag, and/or status for a tracked item. */
   @Transactional
   @CacheEvict(value = "dashboardSummary", key = "#userId")
   public TrackedItemResponse update(UUID userId, UUID id, UpdateTrackedItemRequest request) {
@@ -133,12 +122,14 @@ public class TrackedItemService {
     return TrackedItemResponse.from(trackedItem);
   }
 
+  /** Deletes a tracked item owned by the user. */
   @Transactional
   @CacheEvict(value = "dashboardSummary", key = "#userId")
   public void delete(UUID userId, UUID id) {
     trackedItemRepository.delete(findOwned(userId, id));
   }
 
+  /** Loads a tracked item only if it belongs to the given user. */
   private TrackedItem findOwned(UUID userId, UUID id) {
     return trackedItemRepository.findByIdAndUserId(id, userId)
         .orElseThrow(TrackedItemNotFoundException::new);

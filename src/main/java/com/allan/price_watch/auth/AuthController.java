@@ -20,14 +20,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
-/**
- * {@code register}/{@code login}/{@code refresh} are public per
- * {@code SecurityConfig}; {@code logout} is not — it needs a valid access JWT
- * so only the account owner can revoke their cookie-backed refresh session.
- *
- * <p>Refresh tokens are set as HttpOnly cookies. Access JWTs remain in the
- * JSON body for the SPA to hold in memory and send as {@code Bearer}.
- */
+/** Auth HTTP endpoints: register, login, refresh, and logout. */
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
@@ -40,6 +33,7 @@ public class AuthController {
     this.refreshCookieService = refreshCookieService;
   }
 
+  /** Registers a user and sets the HttpOnly refresh cookie. */
   @PostMapping("/register")
   public ResponseEntity<LoginResponse> register(
       @Valid @RequestBody RegisterRequest request,
@@ -47,6 +41,7 @@ public class AuthController {
     return okWithRefreshCookie(authService.register(request), response);
   }
 
+  /** Logs in and returns an access token plus refresh cookie. */
   @PostMapping("/login")
   public ResponseEntity<LoginResponse> login(
       @Valid @RequestBody LoginRequest request,
@@ -54,10 +49,7 @@ public class AuthController {
     return okWithRefreshCookie(authService.login(request), response);
   }
 
-  /**
-   * Cookie-first refresh. Optional JSON body {@code refreshToken} remains for
-   * Postman / non-browser clients.
-   */
+  /** Issues a new token pair from the refresh cookie (or optional body). */
   @PostMapping("/refresh")
   public ResponseEntity<LoginResponse> refresh(
       @RequestBody(required = false) RefreshRequest body,
@@ -71,6 +63,7 @@ public class AuthController {
     return okWithRefreshCookie(authService.refresh(raw), response);
   }
 
+  /** Ends the session: revokes the refresh token and clears the cookie. */
   @PostMapping("/logout")
   public ResponseEntity<Void> logout(
       @AuthenticationPrincipal UUID userId,
@@ -84,6 +77,7 @@ public class AuthController {
     return ResponseEntity.noContent().build();
   }
 
+  /** Writes the refresh cookie and returns the access token JSON body. */
   private ResponseEntity<LoginResponse> okWithRefreshCookie(
       IssuedTokens tokens, HttpServletResponse response) {
     refreshCookieService.setRefreshCookie(response, tokens.rawRefreshToken());

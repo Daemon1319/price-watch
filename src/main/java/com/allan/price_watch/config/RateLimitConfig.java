@@ -24,23 +24,14 @@ import io.lettuce.core.codec.RedisCodec;
 import io.lettuce.core.codec.StringCodec;
 import jakarta.annotation.PreDestroy;
 
-/**
- * Redis-backed Bucket4j setup so rate-limit counters are shared across app
- * instances. Uses a dedicated Lettuce connection with a string/byte codec
- * (Bucket4j's requirement) rather than reusing Spring Data Redis's
- * connection factory directly.
- *
- * <p>{@code RateLimitFilter} is registered only inside the Security filter
- * chain (after JWT) — the {@link FilterRegistrationBean} below disables
- * Boot's default "every Filter bean is a servlet filter" registration so
- * it doesn't run twice / before auth.
- */
+/** Redis Bucket4j beans for shared API and auth rate-limit counters. */
 @Configuration
 public class RateLimitConfig {
 
   private RedisClient redisClient;
   private StatefulRedisConnection<String, byte[]> connection;
 
+  /** Proxy manager that stores rate-limit buckets in Redis. */
   @Bean
   public ProxyManager<String> rateLimitProxyManager(RedisConnectionFactory connectionFactory) {
     RedisURI uri = resolveRedisUri(connectionFactory);
@@ -70,6 +61,7 @@ public class RateLimitConfig {
     return RedisURI.builder().withHost("localhost").withPort(6379).build();
   }
 
+  /** General API rate-limit capacity and refill. */
   @Bean(name = "apiRateLimitConfiguration")
   public BucketConfiguration apiRateLimitConfiguration(
       @Value("${app.rate-limit.capacity:60}") long capacity,
@@ -78,10 +70,7 @@ public class RateLimitConfig {
     return bucket(capacity, refillPerMinute);
   }
 
-  /**
-   * Stricter bucket for {@code POST /auth/login} and {@code /auth/register}
-   * so credential stuffing is throttled harder than normal API traffic.
-   */
+  /** Stricter bucket for login and register. */
   @Bean(name = "authRateLimitConfiguration")
   public BucketConfiguration authRateLimitConfiguration(
       @Value("${app.rate-limit.auth-capacity:10}") long capacity,
@@ -98,10 +87,10 @@ public class RateLimitConfig {
     return BucketConfiguration.builder().addLimit(limit).build();
   }
 
+  /** Disables Boot servlet registration so the filter runs only in Security. */
   @Bean
   public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
     FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
-    // Only run via SecurityFilterChain (after JWT), not as a standalone servlet filter.
     registration.setEnabled(false);
     return registration;
   }

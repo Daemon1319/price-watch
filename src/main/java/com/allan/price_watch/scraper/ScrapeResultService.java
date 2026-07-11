@@ -24,13 +24,7 @@ import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
-/**
- * Split out from {@code ScrapeWorker} so {@code @Transactional} works
- * through Spring's proxy. Owns product update + price history + outbox write.
- *
- * <p>Thumbnail URLs are stored as the remote CDN link from the scraper
- * (Uniqlo image.uniqlo.com) — no MinIO re-host / no expiring signed URLs.
- */
+/** Persists scrape outcomes: product update, price history, and outbox events. */
 @Service
 public class ScrapeResultService {
 
@@ -56,6 +50,7 @@ public class ScrapeResultService {
     this.meterRegistry = meterRegistry;
   }
 
+  /** Updates product state and enqueues notifications when price/stock change. */
   @Transactional
   public void recordSuccess(Product product, ScrapeResult result) {
     BigDecimal oldPrice = product.getLastKnownPrice();
@@ -109,6 +104,7 @@ public class ScrapeResultService {
     meterRegistry.counter("scrape.success", "site", product.getSite().name()).increment();
   }
 
+  /** Increments consecutive failures after a scrape error. */
   @Transactional
   public void recordFailure(Product product) {
     product.setConsecutiveFailures(product.getConsecutiveFailures() + 1);
@@ -119,6 +115,7 @@ public class ScrapeResultService {
     meterRegistry.counter("scrape.failure", "site", product.getSite().name()).increment();
   }
 
+  /** Evicts dashboard summary cache for every user tracking this product. */
   private void invalidateDashboardCaches(UUID productId) {
     Cache cache = cacheManager.getCache("dashboardSummary");
     if (cache == null || productId == null) {

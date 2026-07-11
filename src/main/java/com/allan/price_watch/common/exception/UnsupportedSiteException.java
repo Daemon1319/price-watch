@@ -2,9 +2,7 @@ package com.allan.price_watch.common.exception;
 
 import org.springframework.http.HttpStatus;
 
-/**
- * URL host is not handled by any registered {@code Scraper}.
- */
+/** Requested URL is not from a supported storefront. */
 public class UnsupportedSiteException extends ApplicationException {
 
   public UnsupportedSiteException() {

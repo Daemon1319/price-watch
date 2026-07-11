@@ -8,22 +8,16 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
-/**
- * Generic URL cleanup so the same product reached through different links
- * (a marketing email with a {@code utm_source}, a shared link with a
- * trailing slash, a mixed-case host) still maps to the same
- * {@code normalized_url} and dedupes correctly against {@code products}.
- * Deliberately has no site-specific knowledge — that's what {@code Scraper}
- * implementations are for.
- */
+/** Canonicalizes product URLs so the same page always maps to one dedup key. */
 @Component
 public class UrlNormalizer {
 
-  // Plan §5a: strip known tracking params; keep product-specific ones (size, color).
+  // Tracking/analytics params only — keep product params like colorCode/sizeCode.
   private static final Pattern TRACKING_PARAM = Pattern.compile(
       "^(utm_[a-z0-9_]+|gclid|fbclid|igshid|ref|mc_[a-z]+|spm|clickid|msclkid|twclid|yclid|pk_campaign|pk_kwd)=.*",
       Pattern.CASE_INSENSITIVE);
 
+  /** Lowercases host, strips tracking query params, and drops trailing slashes. */
   public String normalize(String rawUrl) {
     URI uri = URI.create(rawUrl.trim());
 
@@ -49,11 +43,7 @@ public class UrlNormalizer {
     return normalized.toString();
   }
 
-  /**
-   * Drops known tracking params, then sorts whatever's left so param
-   * order alone never produces two different dedup keys for what's
-   * actually the same URL.
-   */
+  /** Drops tracking params and sorts remaining ones for stable keys. */
   private String normalizeQuery(String rawQuery) {
     if (rawQuery == null || rawQuery.isBlank()) {
       return "";

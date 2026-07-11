@@ -16,26 +16,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-/**
- * Runs once per request, ahead of {@code UsernamePasswordAuthenticationFilter}
- * (see {@code SecurityConfig}). Populates the {@code SecurityContext} purely
- * from the JWT's claims — no database lookup here, that's the point of
- * stateless auth. A controller can get the current user's id via
- * {@code Authentication.getPrincipal()}, cast to {@code UUID}.
- *
- * <p>Missing or invalid tokens are <em>not</em> rejected here — the filter
- * just lets the request continue unauthenticated, and
- * {@code authorizeHttpRequests()} in {@code SecurityConfig} is what actually
- * decides whether that's a problem for the requested path. This keeps the
- * filter itself simple and keeps the "what needs auth" decision in one
- * place instead of split across two classes.
- *
- * <p>No granted authorities are attached ({@code AuthorityUtils
- * .NO_AUTHORITIES}) — this app has no role-based access control, every
- * endpoint's authorization boundary is just "authenticated or not" plus the
- * per-resource ownership checks already built into the repository queries
- * (see {@code TrackedItemRepository}).
- */
+/** Populates SecurityContext from a Bearer JWT when present and valid. */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 

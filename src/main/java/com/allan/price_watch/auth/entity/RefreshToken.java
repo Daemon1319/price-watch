@@ -19,19 +19,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * A single refresh token session for a user. {@code tokenHash} stores a hash
- * (e.g. SHA-256) of the actual refresh token — never the raw token itself —
- * so a database leak alone can't be used to forge sessions. Lookups during
- * the refresh flow happen by hash, not by id.
- *
- * <p>{@code revokedAt} is set by the application on logout (see
- * {@code AuthService.logout}), unlike {@code id}/{@code createdAt} which are
- * database-generated — hence only those two carry {@code @Generated}.
- *
- * <p>No cleanup of expired/revoked rows happens here; that's intentionally
- * left to a future scheduled job (plan §16) rather than handled per-request.
- */
+/** Opaque refresh-token session; stores a hash of the raw token only. */
 @Entity
 @Table(name = "refresh_tokens")
 @Getter

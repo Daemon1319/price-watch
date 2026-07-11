@@ -28,13 +28,7 @@ import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 
 import jakarta.validation.Valid;
 
-/**
- * Every method takes {@code @AuthenticationPrincipal UUID userId} and
- * passes it straight to {@code TrackedItemService} — the actual ownership
- * enforcement lives at the repository query level (see
- * {@code TrackedItemRepository}), this controller just plumbs the
- * authenticated user through, it doesn't re-check anything itself.
- */
+/** REST API for a user's tracked-item subscriptions. */
 @RestController
 @RequestMapping("/api/v1/tracked-items")
 public class TrackedItemController {
@@ -45,6 +39,7 @@ public class TrackedItemController {
     this.trackedItemService = trackedItemService;
   }
 
+  /** Starts tracking a product URL for the authenticated user. */
   @PostMapping
   public ResponseEntity<TrackedItemResponse> create(
       @AuthenticationPrincipal UUID userId,
@@ -55,6 +50,7 @@ public class TrackedItemController {
         .body(response);
   }
 
+  /** Lists the user's tracked items with optional status filter. */
   @GetMapping
   public PageResponse<TrackedItemResponse> list(
       @AuthenticationPrincipal UUID userId,
@@ -63,11 +59,13 @@ public class TrackedItemController {
     return PageResponse.from(trackedItemService.list(userId, parseStatuses(status), pageable));
   }
 
+  /** Returns a single tracked item owned by the user. */
   @GetMapping("/{id}")
   public TrackedItemResponse get(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
     return trackedItemService.get(userId, id);
   }
 
+  /** Updates notification preferences or status for a tracked item. */
   @PatchMapping("/{id}")
   public TrackedItemResponse update(
       @AuthenticationPrincipal UUID userId,
@@ -76,20 +74,14 @@ public class TrackedItemController {
     return trackedItemService.update(userId, id, request);
   }
 
+  /** Stops tracking an item for the user. */
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> delete(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
     trackedItemService.delete(userId, id);
     return ResponseEntity.noContent().build();
   }
 
-  /**
-   * {@code ResponseStatusException} rather than a new {@code ApplicationException}
-   * subclass here on purpose — this is a controller-local input parsing
-   * concern ("you sent a status value that isn't a real enum constant"),
-   * not a domain rule. Spring MVC's default handling already converts it
-   * into an RFC 9457 {@code ProblemDetail} automatically, no entry in
-   * {@code GlobalExceptionHandler} needed.
-   */
+  /** Parses status query params into enum values. */
   private List<TrackedItemStatus> parseStatuses(List<String> rawStatuses) {
     if (rawStatuses == null || rawStatuses.isEmpty()) {
       return List.of();

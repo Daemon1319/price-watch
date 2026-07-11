@@ -2,11 +2,7 @@ package com.allan.price_watch.common.exception;
 
 import org.springframework.http.HttpStatus;
 
-/**
- * Generic 404 for resources that don't have ownership semantics worth a
- * dedicated exception type (unlike {@code TrackedItemNotFoundException},
- * which specifically means "not found, or not yours").
- */
+/** Generic 404 when a resource id does not exist. */
 public class ResourceNotFoundException extends ApplicationException {
 
   public ResourceNotFoundException(String detail) {

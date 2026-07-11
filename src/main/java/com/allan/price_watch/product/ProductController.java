@@ -17,11 +17,7 @@ import com.allan.price_watch.common.web.PageResponse;
 import com.allan.price_watch.product.dto.PriceHistoryResponse;
 import com.allan.price_watch.product.dto.ProductResponse;
 
-/**
- * Products are shared across users. Read endpoints are available to any
- * authenticated caller. {@code reenable-checks} is limited to users who
- * track that product (enforced in {@link ProductService}).
- */
+/** Product read APIs and re-enable checks after repeated scrape failures. */
 @RestController
 @RequestMapping("/api/v1/products")
 public class ProductController {
@@ -32,11 +28,13 @@ public class ProductController {
     this.productService = productService;
   }
 
+  /** Returns product details by id. */
   @GetMapping("/{id}")
   public ProductResponse get(@PathVariable UUID id) {
     return productService.getById(id);
   }
 
+  /** Returns paginated price history for a product. */
   @GetMapping("/{id}/price-history")
   public PageResponse<PriceHistoryResponse> priceHistory(
       @PathVariable UUID id,
@@ -46,10 +44,7 @@ public class ProductController {
     return PageResponse.from(productService.getPriceHistory(id, from, to, pageable));
   }
 
-  /**
-   * After 5 scrape failures a product is skipped by the scheduler. Call this
-   * once you've fixed the scraper (or the site is healthy again) so checks resume.
-   */
+  /** Clears failure streak so scheduled checks resume for this product. */
   @PostMapping("/{id}/reenable-checks")
   public ProductResponse reenableChecks(
       @AuthenticationPrincipal UUID userId,

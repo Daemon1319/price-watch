@@ -16,24 +16,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * A registered account. {@code passwordHash} holds the bcrypt output only —
- * plaintext passwords are never stored or logged.
- *
- * <p>{@code id}, {@code createdAt}, and {@code updatedAt} are all generated
- * by the database (see {@code V1__init_schema.sql}: {@code DEFAULT
- * uuidv7()} and the {@code set_updated_at} trigger), not by Hibernate.
- * {@code @Generated} tells Hibernate to leave these columns out of the
- * INSERT/UPDATE statements entirely and read back whatever Postgres
- * actually generated afterward, instead of Hibernate assigning its own
- * client-side UUID and silently ignoring the column default.
- *
- * <p>Deliberately no {@code @OneToMany} back to {@code TrackedItem} or
- * {@code RefreshToken} here — both are queried directly by {@code userId}
- * through their own repositories. Keeping User free of owned collections
- * means touching a User never risks accidentally loading their entire
- * tracked-item list or token history along with it.
- */
+/** Registered account; password is stored hashed only. */
 @Entity
 @Table(name = "users")
 @Getter

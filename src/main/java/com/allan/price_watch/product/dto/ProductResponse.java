@@ -9,6 +9,7 @@ import com.allan.price_watch.product.entity.Product;
 import com.allan.price_watch.product.entity.Site;
 import com.allan.price_watch.product.entity.StockStatus;
 
+/** Product API response with latest price/stock and health flag. */
 public record ProductResponse(
     UUID id,
     String name,

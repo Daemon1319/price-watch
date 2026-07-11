@@ -25,14 +25,7 @@ import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
 
-/**
- * Read-through Redis cache for the dashboard summary (key = user id,
- * TTL 10 min via {@code spring.cache.redis.time-to-live}). After each
- * scrape, {@code ScrapeResultService} explicitly evicts the cache entries
- * for every user tracking that product so a price drop shows up on the
- * next dashboard load without waiting for TTL. Track create/update/delete
- * also evict via {@code TrackedItemService}.
- */
+/** Builds the cached dashboard summary for a user. */
 @Service
 public class DashboardService {
 
@@ -51,6 +44,7 @@ public class DashboardService {
     this.outboxEventRepository = outboxEventRepository;
   }
 
+  /** Returns tracked count, recent price drops, and unhealthy product count. */
   @Cacheable(value = "dashboardSummary", key = "#userId")
   public DashboardSummaryResponse getSummary(UUID userId) {
     long totalTrackedItems = trackedItemRepository.countByUserId(userId);
@@ -64,6 +58,7 @@ public class DashboardService {
     return new DashboardSummaryResponse(totalTrackedItems, recentPriceDrops, unhealthyCount);
   }
 
+  /** Maps recent PRICE_DROP outbox events to dashboard entries. */
   private List<PriceDropEntry> buildRecentPriceDrops(UUID userId) {
     Map<UUID, UUID> trackedItemIdByProductId = trackedItemRepository
         .findByUserId(userId, Pageable.unpaged()).stream()
@@ -78,12 +73,7 @@ public class DashboardService {
         .toList();
   }
 
-  /**
-   * Maps an outbox PRICE_DROP row. Bad/missing payload keys are skipped so one
-   * corrupt event cannot 500 the whole dashboard. Payload shape is owned by
-   * {@link com.allan.price_watch.scraper.ScrapeResultService} via
-   * {@link OutboxPayloadKeys}.
-   */
+  /** Converts one outbox price-drop row into a dashboard entry, or null if invalid. */
   private PriceDropEntry toPriceDropEntry(OutboxEvent event, Map<UUID, UUID> trackedItemIdByProductId) {
     Map<String, Object> payload = event.getPayload();
     if (payload == null) {
@@ -94,7 +84,7 @@ public class DashboardService {
     UUID productId = event.getProduct().getId();
     UUID trackedItemId = trackedItemIdByProductId.get(productId);
     if (trackedItemId == null) {
-      // User may have untracked after the drop; still skip rather than NPE.
+      // User may have untracked after the drop.
       return null;
     }
 

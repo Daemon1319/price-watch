@@ -4,16 +4,15 @@ import java.net.URI;
 
 import com.allan.price_watch.product.entity.Site;
 
-/**
- * One implementation per storefront under {@code scraper/site/}.
- * Throw {@code ScrapeFailedException} on hard failure; do not return nulls
- * for required price fields.
- */
+/** Site-specific product page scraper (one implementation per storefront). */
 public interface Scraper {
 
+  /** Site this scraper handles. */
   Site getSite();
 
+  /** Whether this scraper can handle the given product URL. */
   boolean supports(URI url);
 
+  /** Fetches current name, price, stock, and thumbnail for the URL. */
   ScrapeResult fetch(URI url);
 }

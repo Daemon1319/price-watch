@@ -7,21 +7,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.allan.price_watch.product.entity.Product;
 
+/** Product persistence and URL dedup lookup. */
 public interface ProductRepository extends JpaRepository<Product, UUID> {
 
-  /**
-   * Used by {@code TrackedItemService} on POST /tracked-items to check
-   * whether a product row already exists for this URL before creating a
-   * new one — the dedup step from plan §5.
-   */
+  /** Finds a product by its canonical URL key. */
   Optional<Product> findByNormalizedUrl(String normalizedUrl);
 
-  /**
-   * Backs the {@code unhealthyCount} field on GET /dashboard/summary.
-   * {@code threshold} is expected to always be called with {@code 5}, matching
-   * the partial index {@code products_consecutive_failures_idx} in
-   * {@code V1__init_schema.sql} — keep those two in sync if the threshold
-   * ever changes.
-   */
+  /** Counts products at or above a consecutive-failure threshold. */
   long countByConsecutiveFailuresGreaterThanEqual(int threshold);
 }

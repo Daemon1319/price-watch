@@ -26,24 +26,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * A pending (or already-published) notification event, written in the same
- * transaction as the {@code Product}/{@code PriceHistory} update that
- * triggered it — the transactional outbox pattern from plan §5, step 4.
- * {@code OutboxRelay} polls for {@code publishedAt IS NULL} rows and hands
- * them to RabbitMQ; {@code NotificationWorker} is what actually sends the
- * email on the consuming side.
- *
- * <p>{@code payload} uses Hibernate 7's native JSON mapping
- * ({@code @JdbcTypeCode(SqlTypes.JSON)}) against the {@code jsonb} column —
- * no extra library (e.g. Hypersistence Utils) needed, that was only
- * necessary before Hibernate 6.
- *
- * <p>The enum here is named {@code OutboxEventType} rather than
- * {@code EventType} specifically to avoid colliding with Hibernate's own
- * {@code org.hibernate.generator.EventType}, which this same file already
- * imports for the {@code @Generated} fields below.
- */
+/** Transactional outbox row for a product change notification. */
 @Entity
 @Table(name = "outbox_events")
 @Getter

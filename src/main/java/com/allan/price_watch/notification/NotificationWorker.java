@@ -24,14 +24,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 import static com.allan.price_watch.config.RabbitMqConfig.NOTIFICATION_SEND_QUEUE;
 
-/**
- * Consumes {@code notification.send} messages published by
- * {@code OutboxRelay}. Fans out to every ACTIVE tracker for the product,
- * applies per-user preferences, and sends email. Uses manual ACK — only
- * ACKs after all eligible emails succeed so a transient SMTP failure
- * requeues the message (RabbitMQ redelivery / eventual DLQ after
- * retries, depending on broker policy).
- */
+/** Consumes notification jobs and emails eligible trackers of a product. */
 @Component
 public class NotificationWorker {
 
@@ -53,6 +46,7 @@ public class NotificationWorker {
     this.meterRegistry = meterRegistry;
   }
 
+  /** Delivers one notification message, ACK on success and requeue on failure. */
   @RabbitListener(queues = NOTIFICATION_SEND_QUEUE, ackMode = "MANUAL")
   public void handle(
       NotificationMessage message,
@@ -67,13 +61,12 @@ public class NotificationWorker {
       log.warn("Notification delivery failed for outbox event {}: {}",
           message.outboxEventId(), e.getMessage());
       meterRegistry.counter("notification.failed", "event_type", message.eventType().name()).increment();
-      // requeue=true for transient SMTP blips. Quorum x-delivery-limit (see
-      // RabbitMqConfig) dead-letters after a few attempts so poison messages
-      // cannot loop forever.
+      // Requeue transient failures; delivery-limit dead-letters poison messages.
       channel.basicNack(deliveryTag, false, true);
     }
   }
 
+  /** Fans out email to each active tracker that matches preference rules. */
   private void deliver(NotificationMessage message) {
     Product product = productRepository.findById(message.productId()).orElse(null);
     if (product == null) {
@@ -90,14 +83,7 @@ public class NotificationWorker {
     }
   }
 
-  /**
-   * Preference rules:
-   * <ul>
-   *   <li>{@code notifyOnRestockOnly=true} → only RESTOCK events</li>
-   *   <li>{@code notifyOnRestockOnly=false} → PRICE_DROP (threshold) + RESTOCK</li>
-   *   <li>{@code priceThreshold} null → any drop; non-null → drop amount must be ≥ threshold</li>
-   * </ul>
-   */
+  /** Applies restock-only and price-threshold preferences for one tracker. */
   static boolean shouldNotify(TrackedItem tracker, OutboxEventType eventType, Map<String, Object> payload) {
     if (tracker.isNotifyOnRestockOnly()) {
       return eventType == OutboxEventType.RESTOCK;

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.allan.price_watch.dashboard.dto.DashboardSummaryResponse;
 
+/** Dashboard summary endpoint for the authenticated user. */
 @RestController
 @RequestMapping("/api/v1/dashboard")
 public class DashboardController {
@@ -19,6 +20,7 @@ public class DashboardController {
     this.dashboardService = dashboardService;
   }
 
+  /** Returns counts and recent price drops for the home dashboard. */
   @GetMapping("/summary")
   public DashboardSummaryResponse summary(@AuthenticationPrincipal UUID userId) {
     return dashboardService.getSummary(userId);

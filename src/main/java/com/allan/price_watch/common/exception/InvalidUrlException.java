@@ -2,6 +2,7 @@ package com.allan.price_watch.common.exception;
 
 import org.springframework.http.HttpStatus;
 
+/** 400 when a submitted product URL cannot be parsed. */
 public class InvalidUrlException extends ApplicationException {
 
   public InvalidUrlException() {

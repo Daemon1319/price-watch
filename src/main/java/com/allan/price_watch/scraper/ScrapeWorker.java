@@ -19,19 +19,7 @@ import com.rabbitmq.client.Channel;
 
 import static com.allan.price_watch.config.RabbitMqConfig.PRODUCT_CHECK_QUEUE;
 
-/**
- * Consumes {@code product.check} jobs. Orchestration only: throttle, lock,
- * scrape, then hand off to {@code ScrapeResultService}.
- *
- * <p>Order is <strong>throttle then lock</strong> so we never hold a product
- * lock while sleeping for domain spacing (which used to cause competing
- * deliveries to ACK-skip until the next cron).
- *
- * <p>Manual ACK: missing product ACKs (nothing to do). Throttle / lock misses
- * NACK with requeue so the check is retried soon instead of waiting hours.
- * Scrape failures NACK without requeue → DLQ while
- * {@code consecutive_failures} drives the next scheduled cycle.
- */
+/** Consumes product-check jobs: throttle, lock, scrape, then record the result. */
 @Component
 public class ScrapeWorker {
 
@@ -59,6 +47,7 @@ public class ScrapeWorker {
     this.scrapeResultService = scrapeResultService;
   }
 
+  /** Handles one product.check message with manual ACK/NACK. */
   @RabbitListener(queues = PRODUCT_CHECK_QUEUE, ackMode = "MANUAL")
   public void handle(
       UUID productId,
@@ -80,7 +69,7 @@ public class ScrapeWorker {
     }
 
     if (!productLockService.tryLock(productId)) {
-      // Another worker is scraping this product — try again shortly.
+      // Another worker holds the lock — retry soon.
       channel.basicNack(deliveryTag, false, true);
       return;
     }
@@ -100,6 +89,7 @@ public class ScrapeWorker {
     }
   }
 
+  /** Runs the site scraper and records success or failure. */
   private ProcessOutcome scrape(Product product, URI uri) {
     Scraper scraper = scraperFactory.resolve(uri);
 
@@ -114,6 +104,7 @@ public class ScrapeWorker {
     }
   }
 
+  /** Waits briefly for a domain throttle slot before scraping. */
   private boolean awaitThrottleSlot(URI uri) {
     for (int attempt = 0; attempt < MAX_THROTTLE_RETRIES; attempt++) {
       if (domainThrottleService.tryAcquire(uri)) {

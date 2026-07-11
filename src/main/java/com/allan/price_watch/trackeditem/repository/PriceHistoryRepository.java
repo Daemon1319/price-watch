@@ -9,12 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.allan.price_watch.trackeditem.entity.PriceHistory;
 
-/**
- * Both methods sort newest-first and are backed by the
- * {@code price_history_product_id_recorded_at_idx} composite index from
- * {@code V2__price_history.sql} — {@code (product_id, recorded_at DESC)}
- * matches this access pattern exactly, so neither query needs a sort step.
- */
+/** Price history queries, newest first. */
 public interface PriceHistoryRepository extends JpaRepository<PriceHistory, UUID> {
 
   Page<PriceHistory> findByProductIdOrderByRecordedAtDesc(UUID productId, Pageable pageable);

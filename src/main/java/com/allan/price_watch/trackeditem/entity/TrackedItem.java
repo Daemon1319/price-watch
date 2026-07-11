@@ -25,19 +25,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * One user's subscription to a {@link Product} — the per-user preferences
- * (price threshold, restock-only flag, active/paused) that don't belong on
- * the shared {@code Product} row itself. This is the resource the
- * {@code /tracked-items} endpoints operate on (see the REST endpoint
- * reference doc).
- *
- * <p>The DB-level uniqueness constraint on {@code (user_id, product_id)}
- * (see {@code V1__init_schema.sql}) is what actually prevents duplicate
- * subscriptions — {@code TrackedItemService} should still pre-check via
- * {@code TrackedItemRepository} for a clean {@code 409} instead of letting
- * the constraint violation surface as a raw DB exception.
- */
+/** One user's subscription to a product, including notify preferences. */
 @Entity
 @Table(name = "tracked_items")
 @Getter

@@ -22,15 +22,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-/**
- * Per-user (authenticated) or per-IP (anonymous) API rate limit via
- * Redis-backed Bucket4j. Auth endpoints ({@code /login}, {@code /register})
- * use a stricter separate bucket so credential stuffing is throttled harder
- * than normal API traffic.
- *
- * <p>If Redis is briefly unavailable, the request is allowed through
- * (fail-open) so a cache blip does not turn into a 500 on register/login.
- */
+/** Redis rate limiter: per-user when authenticated, per-IP otherwise. */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
@@ -54,7 +46,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
   @Override
   protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
-    // CORS preflight — do not burn rate-limit tokens on OPTIONS.
     return "OPTIONS".equalsIgnoreCase(request.getMethod());
   }
 
@@ -80,19 +71,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return;
       }
     } catch (RuntimeException e) {
-      // Redis down / connection reset — do not block the API.
+      // Fail open if Redis is unavailable.
       log.warn("Rate limit check failed for {}; allowing request: {}", key, e.getMessage());
     }
 
     filterChain.doFilter(request, response);
   }
 
-  /**
-   * Credential-stuffing surface: login + register only. Refresh stays on the
-   * general API bucket so a brief multi-tab refresh storm is less likely to
-   * lock users out of re-auth (refresh already has server-side rotation
-   * locks).
-   */
+  /** True for login/register, which use a stricter rate-limit bucket. */
   static boolean isStrictAuthEndpoint(HttpServletRequest request) {
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return false;
@@ -101,7 +87,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     if (path == null) {
       return false;
     }
-    // Strip context path if present.
     String context = request.getContextPath();
     if (context != null && !context.isEmpty() && path.startsWith(context)) {
       path = path.substring(context.length());

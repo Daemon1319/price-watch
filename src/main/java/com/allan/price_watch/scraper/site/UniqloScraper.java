@@ -28,33 +28,14 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/**
- * Uniqlo commerce API scraper.
- *
- * <pre>
- * GET /{locale}/api/commerce/v3/{lang}/products/{productId}?isV2Review=true&amp;withStocks=true
- * </pre>
- *
- * <p>Stock is per size/color under {@code l2s[*].stock.statusCode}
- * ({@code IN_STOCK}, {@code LOW_STOCK}, {@code STOCK_OUT}).
- *
- * <p>When the product URL includes Uniqlo query params {@code colorCode}
- * and/or {@code sizeCode} (e.g. {@code ?colorCode=COL03&amp;sizeCode=SMA004}),
- * stock (and price when available on that L2) is for <em>that variant only</em>.
- * Without those params, stock is aggregated across all variants (any in stock
- * → {@link StockStatus#IN_STOCK}).
- */
+/** Scrapes Uniqlo product pages via their commerce API. */
 @Component
 public class UniqloScraper implements Scraper {
 
   private static final Pattern LOCALE_AND_PRODUCT_ID_PATTERN =
       Pattern.compile("^/([a-z]{2})/([a-z]{2})/products/([A-Z0-9-]+)");
 
-  /**
-   * Registered Uniqlo apex domains. A host is allowed only if it equals a
-   * root or is a subdomain of one ({@code www.uniqlo.com}). Plain
-   * {@code contains("uniqlo.com")} would accept {@code uniqlo.com.evil.com}.
-   */
+  /** Allowed Uniqlo apex domains (exact host or subdomain only). */
   private static final Set<String> ALLOWED_HOST_ROOTS = Set.of(
       "uniqlo.com",
       "uniqlo.co.jp",
@@ -102,10 +83,7 @@ public class UniqloScraper implements Scraper {
     return isAllowedUniqloHost(url.getHost());
   }
 
-  /**
-   * Package-visible for unit tests. Host must be an exact Uniqlo root or a
-   * subdomain of one (suffix match with a leading dot).
-   */
+  /** True if host is a known Uniqlo domain or subdomain. */
   static boolean isAllowedUniqloHost(String host) {
     if (host == null || host.isBlank()) {
       return false;
@@ -119,6 +97,7 @@ public class UniqloScraper implements Scraper {
     return false;
   }
 
+  /** Calls the commerce API and returns name, price, stock, and thumbnail. */
   @Override
   public ScrapeResult fetch(URI url) {
     Matcher matcher = LOCALE_AND_PRODUCT_ID_PATTERN.matcher(url.getPath());
@@ -145,6 +124,7 @@ public class UniqloScraper implements Scraper {
         buildThumbnailUrl(locale, productId, colorCode, item));
   }
 
+  /** GETs the product JSON item from Uniqlo's commerce API. */
   private JsonNode fetchProductItem(URI apiUrl, String productId) {
     String referer = "https://" + apiUrl.getHost() + "/";
     HttpRequest request = HttpRequest.newBuilder(apiUrl)
@@ -194,10 +174,7 @@ public class UniqloScraper implements Scraper {
     return items.get(0);
   }
 
-  /**
-   * Restrict L2 rows to the color/size from the product URL when present.
-   * Uniqlo codes look like {@code COL03} / {@code SMA004}.
-   */
+  /** Restricts L2 variants to the color/size from the product URL when set. */
   private List<JsonNode> filterL2s(JsonNode l2s, String colorCode, String sizeCode) {
     List<JsonNode> all = new ArrayList<>();
     if (!l2s.isArray()) {
@@ -215,16 +192,14 @@ public class UniqloScraper implements Scraper {
         .filter(l2 -> sizeCode == null || sizeCode.equalsIgnoreCase(l2.path("size").path("code").asString("")))
         .toList();
 
-    // Exact color+size requested but not found → empty (stock UNKNOWN), not whole product.
     if (colorCode != null && sizeCode != null) {
       return filtered;
     }
-    // Only one of color/size set: fall back to all if filter matches nothing.
     return filtered.isEmpty() ? all : filtered;
   }
 
+  /** Prefers variant price when available, otherwise top-level product price. */
   private BigDecimal extractPrice(JsonNode item, List<JsonNode> relevantL2s, URI url) {
-    // Prefer price from the filtered variant when present.
     for (JsonNode l2 : relevantL2s) {
       BigDecimal fromL2 = priceFromNode(l2.path("prices"));
       if (fromL2 != null) {
@@ -248,6 +223,7 @@ public class UniqloScraper implements Scraper {
     return rawValue != null ? new BigDecimal(rawValue) : null;
   }
 
+  /** Aggregates stock across relevant variants (any in stock → IN_STOCK). */
   private StockStatus extractStockStatus(List<JsonNode> relevantL2s) {
     if (relevantL2s.isEmpty()) {
       return StockStatus.UNKNOWN;
@@ -275,13 +251,7 @@ public class UniqloScraper implements Scraper {
     return anyAvailable ? StockStatus.IN_STOCK : StockStatus.OUT_OF_STOCK;
   }
 
-  /**
-   * Uniqlo CDN pattern (confirmed from live product pages):
-   * <pre>
-   * https://image.uniqlo.com/UQ/ST3/{locale}/imagesgoods/{goodsId}/item/phgoods_{colorDigits}_{goodsId}_3x4.jpg?width=369
-   * </pre>
-   * e.g. E471809-000 + COL03 → .../471809/item/phgoods_03_471809_3x4.jpg?width=369
-   */
+  /** Builds a Uniqlo CDN thumbnail URL for the product/color. */
   private String buildThumbnailUrl(String locale, String productId, String colorCode, JsonNode item) {
     String goodsId = goodsIdFromProductId(productId);
     if (goodsId == null) {
@@ -306,7 +276,7 @@ public class UniqloScraper implements Scraper {
         + "/item/phgoods_" + colorDigits + "_" + goodsId + "_3x4.jpg?width=369";
   }
 
-  /** E471809-000 → 471809 */
+  /** Extracts numeric goods id from Uniqlo product ids like E471809-000. */
   private static String goodsIdFromProductId(String productId) {
     if (productId == null || productId.isBlank()) {
       return null;
@@ -315,7 +285,7 @@ public class UniqloScraper implements Scraper {
     return m.find() ? m.group(1) : null;
   }
 
-  /** COL03 → 03, COL67 → 67 */
+  /** Extracts color digits from codes like COL03. */
   private static String colorDigitsFromCode(String colorCode) {
     if (colorCode == null || colorCode.isBlank()) {
       return null;
@@ -325,7 +295,6 @@ public class UniqloScraper implements Scraper {
       String digits = upper.substring(3);
       return digits.isBlank() ? null : digits;
     }
-    // already "03" style
     if (upper.matches("\\d+")) {
       return upper;
     }

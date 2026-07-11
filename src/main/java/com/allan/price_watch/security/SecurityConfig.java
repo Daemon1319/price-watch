@@ -11,18 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-/**
- * Stateless JWT setup — no sessions, no Spring-managed login form, no HTTP
- * Basic. {@code JwtAuthenticationFilter} is the only thing that ever
- * populates the {@code SecurityContext}, by validating the bearer token
- * directly rather than going through an {@code AuthenticationManager}/
- * {@code UserDetailsService} chain.
- *
- * <p>{@code RateLimitFilter} sits after JWT so authenticated calls are
- * bucketed per-user rather than all sharing one IP bucket. Login/register
- * use a stricter auth bucket; client IP never trusts {@code X-Forwarded-For}
- * unless {@code app.rate-limit.trust-forwarded-headers=true}.
- */
+/** Stateless JWT security chain: public auth routes, everything else authenticated. */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
@@ -35,11 +24,11 @@ public class SecurityConfig {
     this.rateLimitFilter = rateLimitFilter;
   }
 
+  /** Builds the filter chain with JWT auth and per-request rate limiting. */
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
     http
         .csrf(csrf -> csrf.disable())
-        // CORS is handled by WebConfig's CorsFilter (app.cors.allowed-origins).
         .httpBasic(httpBasic -> httpBasic.disable())
         .formLogin(formLogin -> formLogin.disable())
         .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -54,6 +43,7 @@ public class SecurityConfig {
     return http.build();
   }
 
+  /** Password hasher for registration and login (bcrypt via delegating encoder). */
   @Bean
   public PasswordEncoder passwordEncoder() {
     return PasswordEncoderFactories.createDelegatingPasswordEncoder();
