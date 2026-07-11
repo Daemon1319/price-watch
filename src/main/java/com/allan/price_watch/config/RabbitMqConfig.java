@@ -56,12 +56,23 @@ public class RabbitMqConfig {
     return new DirectExchange(DEAD_LETTER_EXCHANGE);
   }
 
+  /**
+   * Quorum delivery-limit: after N failed deliveries the broker dead-letters
+   * the message (instead of infinite requeue loops from NotificationWorker's
+   * NACK-requeue). Product-check failures already NACK without requeue, but
+   * the limit still caps accidental requeue=true paths.
+   *
+   * <p>If you change these arguments after the queues already exist, RabbitMQ
+   * will refuse redeclaration — delete the queues (or wipe the rabbitmq
+   * volume) once so the new topology is applied.
+   */
   @Bean
   public Queue productCheckQueue() {
     return QueueBuilder.durable(PRODUCT_CHECK_QUEUE)
         .quorum()
         .deadLetterExchange(DEAD_LETTER_EXCHANGE)
         .deadLetterRoutingKey(PRODUCT_CHECK_DLQ)
+        .withArgument("x-delivery-limit", 3)
         .build();
   }
 
@@ -76,6 +87,7 @@ public class RabbitMqConfig {
         .quorum()
         .deadLetterExchange(DEAD_LETTER_EXCHANGE)
         .deadLetterRoutingKey(NOTIFICATION_SEND_DLQ)
+        .withArgument("x-delivery-limit", 3)
         .build();
   }
 

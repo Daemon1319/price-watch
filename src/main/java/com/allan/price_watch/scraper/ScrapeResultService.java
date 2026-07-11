@@ -2,11 +2,16 @@ package com.allan.price_watch.scraper;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.allan.price_watch.notification.OutboxPayloadKeys;
 import com.allan.price_watch.notification.entity.OutboxEvent;
 import com.allan.price_watch.notification.entity.OutboxEventType;
 import com.allan.price_watch.notification.repository.OutboxEventRepository;
@@ -15,27 +20,16 @@ import com.allan.price_watch.product.entity.StockStatus;
 import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.trackeditem.entity.PriceHistory;
 import com.allan.price_watch.trackeditem.repository.PriceHistoryRepository;
+import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
- * Split out from {@code ScrapeWorker} specifically so {@code @Transactional}
- * actually works — Spring's transaction advice is proxy-based, and calling
- * a {@code @Transactional} method from within the same class instance
- * bypasses the proxy entirely (a well-known Spring gotcha). Putting the
- * persistence logic in its own injected bean means {@code ScrapeWorker}
- * calls through the real proxy, so the transaction boundary is honored.
+ * Split out from {@code ScrapeWorker} so {@code @Transactional} works
+ * through Spring's proxy. Owns product update + price history + outbox write.
  *
- * <p>This is also where the transactional outbox pattern's core guarantee
- * actually lives: {@code Product} update, {@code PriceHistory} insert, and
- * {@code OutboxEvent} insert either all commit together or none do. If
- * that weren't atomic, a crash between "update the price" and "record the
- * event" could silently drop a notification a user was relying on.
- *
- * <p>Only emits {@code PRICE_DROP} and {@code RESTOCK} events — not
- * {@code PRICE_INCREASE} or {@code OUT_OF_STOCK} — since nothing
- * downstream acts on those yet (v1 scope, per plan §14). Each event
- * covers the product as a whole; fanning out to the specific users
- * tracking it and filtering by their individual threshold/restock-only
- * preference is {@code NotificationWorker}'s job, not this class's.
+ * <p>Thumbnail URLs are stored as the remote CDN link from the scraper
+ * (Uniqlo image.uniqlo.com) — no MinIO re-host / no expiring signed URLs.
  */
 @Service
 public class ScrapeResultService {
@@ -43,14 +37,23 @@ public class ScrapeResultService {
   private final ProductRepository productRepository;
   private final PriceHistoryRepository priceHistoryRepository;
   private final OutboxEventRepository outboxEventRepository;
+  private final TrackedItemRepository trackedItemRepository;
+  private final CacheManager cacheManager;
+  private final MeterRegistry meterRegistry;
 
   public ScrapeResultService(
       ProductRepository productRepository,
       PriceHistoryRepository priceHistoryRepository,
-      OutboxEventRepository outboxEventRepository) {
+      OutboxEventRepository outboxEventRepository,
+      TrackedItemRepository trackedItemRepository,
+      CacheManager cacheManager,
+      MeterRegistry meterRegistry) {
     this.productRepository = productRepository;
     this.priceHistoryRepository = priceHistoryRepository;
     this.outboxEventRepository = outboxEventRepository;
+    this.trackedItemRepository = trackedItemRepository;
+    this.cacheManager = cacheManager;
+    this.meterRegistry = meterRegistry;
   }
 
   @Transactional
@@ -65,19 +68,17 @@ public class ScrapeResultService {
     if (result.name() != null) {
       product.setName(result.name());
     }
-    if (result.thumbnailUrl() != null) {
+    if (result.thumbnailUrl() != null && !result.thumbnailUrl().isBlank()) {
       product.setThumbnailUrl(result.thumbnailUrl());
     }
+
     product.setLastKnownPrice(result.price());
     product.setLastKnownStockStatus(result.stockStatus());
     product.setLastCheckedAt(Instant.now());
     product.setConsecutiveFailures(0);
     productRepository.save(product);
 
-    // Only insert a history row when something actually changed — not on
-    // every routine check — otherwise this table fills with identical
-    // repeated values for every unchanged product on every scheduler run.
-    if (priceChanged || stockChanged) {
+    if ((priceChanged || stockChanged) && result.price() != null) {
       priceHistoryRepository.save(PriceHistory.builder()
           .product(product)
           .price(result.price())
@@ -85,11 +86,13 @@ public class ScrapeResultService {
           .build());
     }
 
-    if (priceChanged && result.price().compareTo(oldPrice) < 0) {
+    if (priceChanged && result.price() != null && result.price().compareTo(oldPrice) < 0) {
       outboxEventRepository.save(OutboxEvent.builder()
           .product(product)
           .eventType(OutboxEventType.PRICE_DROP)
-          .payload(Map.of("oldPrice", oldPrice, "newPrice", result.price()))
+          .payload(Map.of(
+              OutboxPayloadKeys.OLD_PRICE, oldPrice,
+              OutboxPayloadKeys.NEW_PRICE, result.price()))
           .build());
     }
 
@@ -101,6 +104,9 @@ public class ScrapeResultService {
           .payload(Map.of())
           .build());
     }
+
+    invalidateDashboardCaches(product.getId());
+    meterRegistry.counter("scrape.success", "site", product.getSite().name()).increment();
   }
 
   @Transactional
@@ -108,5 +114,19 @@ public class ScrapeResultService {
     product.setConsecutiveFailures(product.getConsecutiveFailures() + 1);
     product.setLastCheckedAt(Instant.now());
     productRepository.save(product);
+
+    invalidateDashboardCaches(product.getId());
+    meterRegistry.counter("scrape.failure", "site", product.getSite().name()).increment();
+  }
+
+  private void invalidateDashboardCaches(UUID productId) {
+    Cache cache = cacheManager.getCache("dashboardSummary");
+    if (cache == null || productId == null) {
+      return;
+    }
+    List<UUID> userIds = trackedItemRepository.findUserIdsByProductId(productId);
+    for (UUID userId : userIds) {
+      cache.evict(userId);
+    }
   }
 }

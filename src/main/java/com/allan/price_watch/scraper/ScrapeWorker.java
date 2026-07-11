@@ -1,33 +1,41 @@
 package com.allan.price_watch.scraper;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 import com.allan.price_watch.product.entity.Product;
 import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.scraper.lock.ProductLockService;
 import com.allan.price_watch.scraper.throttle.DomainThrottleService;
+import com.rabbitmq.client.Channel;
 
 import static com.allan.price_watch.config.RabbitMqConfig.PRODUCT_CHECK_QUEUE;
 
 /**
- * Consumes {@code product.check} jobs (one per productId, enqueued by
- * {@code ProductCheckScheduler}) and re-scrapes that product. This is the
- * one place a scrape happens for an <em>existing</em> product — the very
- * first scrape, for a brand new URL, is handled synchronously in
- * {@code ProductService.findOrCreateByUrl} instead, since that caller
- * needs a real result immediately rather than "check back later."
+ * Consumes {@code product.check} jobs. Orchestration only: throttle, lock,
+ * scrape, then hand off to {@code ScrapeResultService}.
  *
- * <p>Orchestration only: acquire the per-product lock, respect the
- * per-domain throttle, call the resolved {@code Scraper}, then hand the
- * result to {@code ScrapeResultService} for the actual (transactional)
- * persistence — see that class's Javadoc for why the split exists.
+ * <p>Order is <strong>throttle then lock</strong> so we never hold a product
+ * lock while sleeping for domain spacing (which used to cause competing
+ * deliveries to ACK-skip until the next cron).
+ *
+ * <p>Manual ACK: missing product ACKs (nothing to do). Throttle / lock misses
+ * NACK with requeue so the check is retried soon instead of waiting hours.
+ * Scrape failures NACK without requeue → DLQ while
+ * {@code consecutive_failures} drives the next scheduled cycle.
  */
 @Component
 public class ScrapeWorker {
+
+  private static final Logger log = LoggerFactory.getLogger(ScrapeWorker.class);
 
   private static final int MAX_THROTTLE_RETRIES = 3;
   private static final long THROTTLE_RETRY_DELAY_MS = 1000;
@@ -51,53 +59,58 @@ public class ScrapeWorker {
     this.scrapeResultService = scrapeResultService;
   }
 
-  @RabbitListener(queues = PRODUCT_CHECK_QUEUE)
-  public void handle(UUID productId) {
-    if (!productLockService.tryLock(productId)) {
-      // Another delivery/instance is already scraping this product right
-      // now — safe to just drop this one rather than requeue, since it's
-      // a routine recheck, not a user-facing action waiting on a result.
-      return;
-    }
+  @RabbitListener(queues = PRODUCT_CHECK_QUEUE, ackMode = "MANUAL")
+  public void handle(
+      UUID productId,
+      Channel channel,
+      @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
 
-    try {
-      process(productId);
-    } finally {
-      productLockService.unlock(productId);
-    }
-  }
-
-  private void process(UUID productId) {
     Product product = productRepository.findById(productId).orElse(null);
     if (product == null) {
-      // Product was deleted between being enqueued and being processed.
+      channel.basicAck(deliveryTag, false);
       return;
     }
 
     URI uri = URI.create(product.getNormalizedUrl());
 
     if (!awaitThrottleSlot(uri)) {
-      // Couldn't get a throttle slot after a few short retries. Rather
-      // than block this listener thread indefinitely or hammer the
-      // target site, skip this cycle — the next scheduled check picks it
-      // back up. Acceptable for a routine recheck; contrast with the
-      // first-scrape path in ProductService, which has no such luxury.
+      log.debug("Throttle miss for product {}; requeue", productId);
+      channel.basicNack(deliveryTag, false, true);
       return;
     }
 
+    if (!productLockService.tryLock(productId)) {
+      // Another worker is scraping this product — try again shortly.
+      channel.basicNack(deliveryTag, false, true);
+      return;
+    }
+
+    try {
+      ProcessOutcome outcome = scrape(product, uri);
+      if (outcome == ProcessOutcome.SCRAPE_FAILED) {
+        channel.basicNack(deliveryTag, false, false);
+      } else {
+        channel.basicAck(deliveryTag, false);
+      }
+    } catch (RuntimeException e) {
+      log.warn("Unexpected error scraping product {}: {}", productId, e.getMessage());
+      channel.basicNack(deliveryTag, false, false);
+    } finally {
+      productLockService.unlock(productId);
+    }
+  }
+
+  private ProcessOutcome scrape(Product product, URI uri) {
     Scraper scraper = scraperFactory.resolve(uri);
 
     try {
       ScrapeResult result = scraper.fetch(uri);
       scrapeResultService.recordSuccess(product, result);
+      return ProcessOutcome.SUCCESS;
     } catch (RuntimeException e) {
-      // Covers ScrapeFailedException and anything else a Scraper
-      // implementation might throw — a scrape failure is expected,
-      // routine behavior (a site's markup changes, a request times out),
-      // not something that should crash the listener or dead-letter the
-      // message. consecutiveFailures is what escalates a persistently
-      // failing product to "unhealthy," not a thrown exception here.
+      log.debug("Scrape failed for product {}: {}", product.getId(), e.getMessage());
       scrapeResultService.recordFailure(product);
+      return ProcessOutcome.SCRAPE_FAILED;
     }
   }
 
@@ -114,5 +127,10 @@ public class ScrapeWorker {
       }
     }
     return false;
+  }
+
+  private enum ProcessOutcome {
+    SUCCESS,
+    SCRAPE_FAILED
   }
 }

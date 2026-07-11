@@ -5,8 +5,10 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -16,12 +18,9 @@ import com.allan.price_watch.product.dto.PriceHistoryResponse;
 import com.allan.price_watch.product.dto.ProductResponse;
 
 /**
- * Products are shared, not user-owned (see {@code Product}'s Javadoc), so
- * unlike {@code TrackedItemController} there's no ownership check to make
- * here — {@code SecurityConfig}'s {@code anyRequest().authenticated()} is
- * the entire authorization boundary for these two endpoints. Any
- * authenticated user can view any product's info/price history, since
- * it's shared, deduplicated data rather than something scoped to them.
+ * Products are shared across users. Read endpoints are available to any
+ * authenticated caller. {@code reenable-checks} is limited to users who
+ * track that product (enforced in {@link ProductService}).
  */
 @RestController
 @RequestMapping("/api/v1/products")
@@ -45,5 +44,16 @@ public class ProductController {
       @RequestParam(required = false) Instant to,
       @PageableDefault(size = 20) Pageable pageable) {
     return PageResponse.from(productService.getPriceHistory(id, from, to, pageable));
+  }
+
+  /**
+   * After 5 scrape failures a product is skipped by the scheduler. Call this
+   * once you've fixed the scraper (or the site is healthy again) so checks resume.
+   */
+  @PostMapping("/{id}/reenable-checks")
+  public ProductResponse reenableChecks(
+      @AuthenticationPrincipal UUID userId,
+      @PathVariable UUID id) {
+    return productService.reenableChecks(userId, id);
   }
 }

@@ -14,15 +14,25 @@ import com.allan.price_watch.notification.entity.OutboxEvent;
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
   /**
-   * {@code findByPublishedAtIsNullOrderByCreatedAtAsc} is the exact query
-   * {@code OutboxRelay} polls every 5-10s (plan §5, step 4) — oldest
-   * unpublished events first, batch size controlled by the {@code Pageable}
-   * the caller passes in (e.g. {@code PageRequest.of(0, 50)}) rather than
-   * hardcoded here. Matches the partial index
-   * {@code outbox_events_unpublished_idx} from {@code V3__outbox_events.sql},
-   * so this stays fast regardless of how many published rows accumulate.
+   * Outbox relay poll (plan §5 step 4): oldest unpublished first, batch size
+   * via {@code Pageable}. Join-fetch product so relay can read product id
+   * without an N+1. Matches partial index {@code outbox_events_unpublished_idx}.
    */
+  @Query("""
+      select oe from OutboxEvent oe
+      join fetch oe.product
+      where oe.publishedAt is null
+      order by oe.createdAt asc
+      """)
   List<OutboxEvent> findByPublishedAtIsNullOrderByCreatedAtAsc(Pageable pageable);
+
+  /** Reload one event with product for per-event outbox publish. */
+  @Query("""
+      select oe from OutboxEvent oe
+      join fetch oe.product
+      where oe.id = :id
+      """)
+  java.util.Optional<OutboxEvent> findByIdWithProduct(@Param("id") UUID id);
 
   /**
    * Backs {@code recentPriceDrops} on GET /dashboard/summary.

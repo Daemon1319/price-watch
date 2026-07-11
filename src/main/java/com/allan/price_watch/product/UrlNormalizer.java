@@ -19,8 +19,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class UrlNormalizer {
 
+  // Plan §5a: strip known tracking params; keep product-specific ones (size, color).
   private static final Pattern TRACKING_PARAM = Pattern.compile(
-      "^(utm_[a-z]+|gclid|fbclid|igshid|ref|mc_[a-z]+)=.*", Pattern.CASE_INSENSITIVE);
+      "^(utm_[a-z0-9_]+|gclid|fbclid|igshid|ref|mc_[a-z]+|spm|clickid|msclkid|twclid|yclid|pk_campaign|pk_kwd)=.*",
+      Pattern.CASE_INSENSITIVE);
 
   public String normalize(String rawUrl) {
     URI uri = URI.create(rawUrl.trim());

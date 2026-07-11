@@ -1,12 +1,11 @@
 package com.allan.price_watch.auth.dto;
 
 /**
- * {@code expiresIn} is in seconds, matching the REST endpoint reference doc
- * — returned alongside the tokens so clients don't have to decode the JWT
- * just to know when to refresh.
+ * Access JWT only in the response body. The opaque refresh token is delivered
+ * via an HttpOnly cookie (see {@code RefreshCookieService}) so browser JS
+ * cannot read it. {@code expiresIn} is the access-token TTL in seconds.
  */
 public record LoginResponse(
     String accessToken,
-    String refreshToken,
     long expiresIn) {
 }

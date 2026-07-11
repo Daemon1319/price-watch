@@ -3,10 +3,16 @@ package com.allan.price_watch.scraper.site;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,32 +29,20 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Uniqlo product pages are a client-side rendered SPA — price/stock never
- * appear in the server-rendered HTML at all (confirmed by fetching a live
- * page directly: full description, images, colors present, price nowhere).
- * A JSoup-selector approach is architecturally the wrong tool for this
- * site, so this scraper instead calls the same internal JSON API the
- * site's own frontend uses, confirmed live against:
+ * Uniqlo commerce API scraper.
  *
  * <pre>
- * https://www.uniqlo.com/ph/api/commerce/v3/en/products?productIds=E484203-000&amp;isV2Review=false&amp;imageRatio=3x4
+ * GET /{locale}/api/commerce/v3/{lang}/products/{productId}?isV2Review=true&amp;withStocks=true
  * </pre>
  *
- * <p>The locale ({@code ph}) and language ({@code en}) segments are parsed
- * out of the submitted product URL rather than hardcoded, so this works
- * across Uniqlo's other country sites without changes, on the assumption
- * they follow the same {@code /{locale}/{language}/products/{id}/...}
- * path shape observed on the PH site.
+ * <p>Stock is per size/color under {@code l2s[*].stock.statusCode}
+ * ({@code IN_STOCK}, {@code LOW_STOCK}, {@code STOCK_OUT}).
  *
- * <p><b>Known gap: stock status is always {@code UNKNOWN}.</b> The
- * product-detail response includes colors/sizes with a {@code states}
- * array (e.g. {@code ["display", "sale"]}), but every example captured so
- * far shows identical states regardless of actual availability — nothing
- * in this response has been confirmed to indicate "sold out." A separate
- * endpoint (possibly a {@code withStocks=true}-style parameter, per
- * publicly documented reverse-engineering of Uniqlo's API) likely carries
- * per-size inventory; this needs a real sold-out product's network trace
- * to confirm and implement properly.
+ * <p>When the product URL includes Uniqlo query params {@code colorCode}
+ * and/or {@code sizeCode} (e.g. {@code ?colorCode=COL03&amp;sizeCode=SMA004}),
+ * stock (and price when available on that L2) is for <em>that variant only</em>.
+ * Without those params, stock is aggregated across all variants (any in stock
+ * → {@link StockStatus#IN_STOCK}).
  */
 @Component
 public class UniqloScraper implements Scraper {
@@ -56,8 +50,41 @@ public class UniqloScraper implements Scraper {
   private static final Pattern LOCALE_AND_PRODUCT_ID_PATTERN =
       Pattern.compile("^/([a-z]{2})/([a-z]{2})/products/([A-Z0-9-]+)");
 
+  /**
+   * Registered Uniqlo apex domains. A host is allowed only if it equals a
+   * root or is a subdomain of one ({@code www.uniqlo.com}). Plain
+   * {@code contains("uniqlo.com")} would accept {@code uniqlo.com.evil.com}.
+   */
+  private static final Set<String> ALLOWED_HOST_ROOTS = Set.of(
+      "uniqlo.com",
+      "uniqlo.co.jp",
+      "uniqlo.co.uk",
+      "uniqlo.com.cn",
+      "uniqlo.kr",
+      "uniqlo.tw",
+      "uniqlo.hk",
+      "uniqlo.sg",
+      "uniqlo.my",
+      "uniqlo.th",
+      "uniqlo.ph",
+      "uniqlo.id",
+      "uniqlo.vn",
+      "uniqlo.in",
+      "uniqlo.fr",
+      "uniqlo.de",
+      "uniqlo.es",
+      "uniqlo.it",
+      "uniqlo.nl",
+      "uniqlo.be",
+      "uniqlo.se",
+      "uniqlo.dk",
+      "uniqlo.au",
+      "uniqlo.ca");
+
   private final HttpClient httpClient = HttpClient.newBuilder()
-      .connectTimeout(Duration.ofSeconds(10))
+      .version(HttpClient.Version.HTTP_1_1)
+      .connectTimeout(Duration.ofSeconds(15))
+      .followRedirects(HttpClient.Redirect.NORMAL)
       .build();
   private final JsonMapper jsonMapper;
 
@@ -72,8 +99,24 @@ public class UniqloScraper implements Scraper {
 
   @Override
   public boolean supports(URI url) {
-    String host = url.getHost();
-    return host != null && host.contains("uniqlo.com");
+    return isAllowedUniqloHost(url.getHost());
+  }
+
+  /**
+   * Package-visible for unit tests. Host must be an exact Uniqlo root or a
+   * subdomain of one (suffix match with a leading dot).
+   */
+  static boolean isAllowedUniqloHost(String host) {
+    if (host == null || host.isBlank()) {
+      return false;
+    }
+    String normalized = host.toLowerCase(Locale.ROOT);
+    for (String root : ALLOWED_HOST_ROOTS) {
+      if (normalized.equals(root) || normalized.endsWith("." + root)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override
@@ -86,22 +129,34 @@ public class UniqloScraper implements Scraper {
     String language = matcher.group(2);
     String productId = matcher.group(3);
 
+    String colorCode = queryParam(url, "colorCode");
+    String sizeCode = queryParam(url, "sizeCode");
+
     URI apiUrl = URI.create("https://" + url.getHost() + "/" + locale + "/api/commerce/v3/"
-        + language + "/products?productIds=" + productId + "&isV2Review=false&imageRatio=3x4");
+        + language + "/products/" + productId + "?isV2Review=true&withStocks=true");
 
     JsonNode item = fetchProductItem(apiUrl, productId);
+    List<JsonNode> relevantL2s = filterL2s(item.path("l2s"), colorCode, sizeCode);
 
     return new ScrapeResult(
         item.path("name").asString(null),
-        extractPrice(item, url),
-        StockStatus.UNKNOWN, // see class Javadoc — not available in this response
-        extractThumbnailUrl(item));
+        extractPrice(item, relevantL2s, url),
+        extractStockStatus(relevantL2s),
+        buildThumbnailUrl(locale, productId, colorCode, item));
   }
 
   private JsonNode fetchProductItem(URI apiUrl, String productId) {
+    String referer = "https://" + apiUrl.getHost() + "/";
     HttpRequest request = HttpRequest.newBuilder(apiUrl)
-        .header("Accept", "application/json")
-        .timeout(Duration.ofSeconds(10))
+        .version(HttpClient.Version.HTTP_1_1)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        .header("Referer", referer)
+        .header("Origin", "https://" + apiUrl.getHost())
+        .timeout(Duration.ofSeconds(20))
         .GET()
         .build();
 
@@ -120,13 +175,18 @@ public class UniqloScraper implements Scraper {
           "Uniqlo API returned status " + response.statusCode() + " for " + productId);
     }
 
-    JsonNode items;
+    JsonNode root;
     try {
-      items = jsonMapper.readTree(response.body()).path("result").path("items");
+      root = jsonMapper.readTree(response.body());
     } catch (JacksonException e) {
       throw new ScrapeFailedException("Could not parse Uniqlo API response for " + productId);
     }
 
+    if (!"ok".equals(root.path("status").asString(null))) {
+      throw new ScrapeFailedException("Uniqlo API returned non-ok status for " + productId);
+    }
+
+    JsonNode items = root.path("result").path("items");
     if (!items.isArray() || items.size() == 0) {
       throw new ScrapeFailedException("Uniqlo API returned no items for product " + productId);
     }
@@ -134,23 +194,159 @@ public class UniqloScraper implements Scraper {
     return items.get(0);
   }
 
-  /** Prefers the promo (sale) price over base when both are present — that's the price a shopper actually pays. */
-  private BigDecimal extractPrice(JsonNode item, URI url) {
-    JsonNode prices = item.path("prices");
-    JsonNode promo = prices.path("promo");
-    JsonNode priceNode = (!promo.isMissingNode() && !promo.isNull()) ? promo : prices.path("base");
-
-    String rawValue = priceNode.path("value").asString(null);
-    if (rawValue == null) {
-      throw new ScrapeFailedException("Could not find a price in Uniqlo API response for " + url);
+  /**
+   * Restrict L2 rows to the color/size from the product URL when present.
+   * Uniqlo codes look like {@code COL03} / {@code SMA004}.
+   */
+  private List<JsonNode> filterL2s(JsonNode l2s, String colorCode, String sizeCode) {
+    List<JsonNode> all = new ArrayList<>();
+    if (!l2s.isArray()) {
+      return all;
     }
-    return new BigDecimal(rawValue);
+    for (JsonNode l2 : l2s) {
+      all.add(l2);
+    }
+    if (colorCode == null && sizeCode == null) {
+      return all;
+    }
+
+    List<JsonNode> filtered = all.stream()
+        .filter(l2 -> colorCode == null || colorCode.equalsIgnoreCase(l2.path("color").path("code").asString("")))
+        .filter(l2 -> sizeCode == null || sizeCode.equalsIgnoreCase(l2.path("size").path("code").asString("")))
+        .toList();
+
+    // Exact color+size requested but not found → empty (stock UNKNOWN), not whole product.
+    if (colorCode != null && sizeCode != null) {
+      return filtered;
+    }
+    // Only one of color/size set: fall back to all if filter matches nothing.
+    return filtered.isEmpty() ? all : filtered;
   }
 
-  private String extractThumbnailUrl(JsonNode item) {
-    JsonNode mainImages = item.path("images").path("main");
-    if (mainImages.isArray() && mainImages.size() > 0) {
-      return mainImages.get(0).path("url").asString(null);
+  private BigDecimal extractPrice(JsonNode item, List<JsonNode> relevantL2s, URI url) {
+    // Prefer price from the filtered variant when present.
+    for (JsonNode l2 : relevantL2s) {
+      BigDecimal fromL2 = priceFromNode(l2.path("prices"));
+      if (fromL2 != null) {
+        return fromL2;
+      }
+    }
+    BigDecimal topLevel = priceFromNode(item.path("prices"));
+    if (topLevel != null) {
+      return topLevel;
+    }
+    throw new ScrapeFailedException("Could not find a price in Uniqlo API response for " + url);
+  }
+
+  private BigDecimal priceFromNode(JsonNode prices) {
+    if (prices == null || prices.isMissingNode() || prices.isNull()) {
+      return null;
+    }
+    JsonNode promo = prices.path("promo");
+    JsonNode priceNode = (!promo.isMissingNode() && !promo.isNull()) ? promo : prices.path("base");
+    String rawValue = priceNode.path("value").asString(null);
+    return rawValue != null ? new BigDecimal(rawValue) : null;
+  }
+
+  private StockStatus extractStockStatus(List<JsonNode> relevantL2s) {
+    if (relevantL2s.isEmpty()) {
+      return StockStatus.UNKNOWN;
+    }
+
+    boolean sawAny = false;
+    boolean anyAvailable = false;
+
+    for (JsonNode l2 : relevantL2s) {
+      JsonNode stock = l2.path("stock");
+      if (stock.isMissingNode() || stock.isNull()) {
+        continue;
+      }
+      sawAny = true;
+      String code = stock.path("statusCode").asString("");
+      if ("IN_STOCK".equals(code) || "LOW_STOCK".equals(code)) {
+        anyAvailable = true;
+        break;
+      }
+    }
+
+    if (!sawAny) {
+      return StockStatus.UNKNOWN;
+    }
+    return anyAvailable ? StockStatus.IN_STOCK : StockStatus.OUT_OF_STOCK;
+  }
+
+  /**
+   * Uniqlo CDN pattern (confirmed from live product pages):
+   * <pre>
+   * https://image.uniqlo.com/UQ/ST3/{locale}/imagesgoods/{goodsId}/item/phgoods_{colorDigits}_{goodsId}_3x4.jpg?width=369
+   * </pre>
+   * e.g. E471809-000 + COL03 → .../471809/item/phgoods_03_471809_3x4.jpg?width=369
+   */
+  private String buildThumbnailUrl(String locale, String productId, String colorCode, JsonNode item) {
+    String goodsId = goodsIdFromProductId(productId);
+    if (goodsId == null) {
+      return null;
+    }
+
+    String colorDigits = colorDigitsFromCode(colorCode);
+    if (colorDigits == null) {
+      colorDigits = colorDigitsFromCode(item.path("representative").path("color").path("code").asString(null));
+    }
+    if (colorDigits == null) {
+      JsonNode colors = item.path("colors");
+      if (colors.isArray() && colors.size() > 0) {
+        colorDigits = colorDigitsFromCode(colors.get(0).path("code").asString(null));
+      }
+    }
+    if (colorDigits == null) {
+      colorDigits = "00";
+    }
+
+    return "https://image.uniqlo.com/UQ/ST3/" + locale + "/imagesgoods/" + goodsId
+        + "/item/phgoods_" + colorDigits + "_" + goodsId + "_3x4.jpg?width=369";
+  }
+
+  /** E471809-000 → 471809 */
+  private static String goodsIdFromProductId(String productId) {
+    if (productId == null || productId.isBlank()) {
+      return null;
+    }
+    Matcher m = Pattern.compile("E?(\\d+)", Pattern.CASE_INSENSITIVE).matcher(productId);
+    return m.find() ? m.group(1) : null;
+  }
+
+  /** COL03 → 03, COL67 → 67 */
+  private static String colorDigitsFromCode(String colorCode) {
+    if (colorCode == null || colorCode.isBlank()) {
+      return null;
+    }
+    String upper = colorCode.trim().toUpperCase(Locale.ROOT);
+    if (upper.startsWith("COL")) {
+      String digits = upper.substring(3);
+      return digits.isBlank() ? null : digits;
+    }
+    // already "03" style
+    if (upper.matches("\\d+")) {
+      return upper;
+    }
+    return null;
+  }
+
+  private static String queryParam(URI url, String name) {
+    String query = url.getRawQuery();
+    if (query == null || query.isBlank()) {
+      return null;
+    }
+    for (String part : query.split("&")) {
+      int eq = part.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      String key = URLDecoder.decode(part.substring(0, eq), StandardCharsets.UTF_8);
+      if (name.equalsIgnoreCase(key)) {
+        String value = URLDecoder.decode(part.substring(eq + 1), StandardCharsets.UTF_8);
+        return value.isBlank() ? null : value;
+      }
     }
     return null;
   }

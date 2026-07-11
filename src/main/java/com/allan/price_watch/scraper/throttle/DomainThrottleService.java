@@ -8,10 +8,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * Redis-backed minimum-delay-between-requests guard, per domain (e.g.
- * {@code uniqlo.com}, {@code hm.com}), shared across every app instance
- * and every {@code ScrapeWorker} thread — an in-memory-only throttle
- * wouldn't coordinate across multiple running instances, which defeats
- * the point of being a good citizen toward the target sites.
+ * {@code uniqlo.com}), shared across every app instance and every
+ * {@code ScrapeWorker} thread — an in-memory-only throttle wouldn't
+ * coordinate across multiple running instances, which defeats the point
+ * of being a good citizen toward the target sites.
  *
  * <p>Same SETNX-with-TTL primitive as {@code ProductLockService}, but
  * here the TTL itself <em>is</em> the throttle: a domain key existing
@@ -24,7 +24,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class DomainThrottleService {
 
-  private static final Duration MIN_DELAY_BETWEEN_REQUESTS = Duration.ofSeconds(2);
+  // Plan suggests 3–5s between requests to the same domain.
+  private static final Duration MIN_DELAY_BETWEEN_REQUESTS = Duration.ofSeconds(3);
   private static final String KEY_PREFIX = "domain-throttle:";
 
   private final StringRedisTemplate redisTemplate;

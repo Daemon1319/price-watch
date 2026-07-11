@@ -9,15 +9,22 @@ services:
       POSTGRES_DB: pricewatch
       POSTGRES_USER: pricewatch
       POSTGRES_PASSWORD: pricewatch
+    # Host 5433 (not 5432): a local Windows PostgreSQL install commonly
+    # already owns 5432, so publishing there makes Spring hit the wrong
+    # server and fail with "password authentication failed".
     ports:
-      - "5432:5432"
+      - "5433:5432"
+    # Postgres 18+ images expect the volume at /var/lib/postgresql (not
+    # .../data). Mounting the old path makes the container crash-loop with
+    # "PostgreSQL data in /var/lib/postgresql/data (unused mount/volume)".
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pricewatch -d pricewatch"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   redis:
     image: redis:8.8-alpine
@@ -51,22 +58,16 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    image: cgr.dev/chainguard/minio:latest
-    container_name: pricewatch-minio
+  # Local SMTP catcher for notification emails. Web UI: http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: pricewatch-mailhog
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: pricewatch
-      MINIO_ROOT_PASSWORD: pricewatch123
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
+      - "1025:1025"
+      - "8025:8025"
 
 volumes:
   postgres-data:
   redis-data:
   rabbitmq-data:
-  minio-data:

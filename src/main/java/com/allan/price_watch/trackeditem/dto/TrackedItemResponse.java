@@ -11,10 +11,9 @@ import com.allan.price_watch.trackeditem.entity.TrackedItem;
 import com.allan.price_watch.trackeditem.entity.TrackedItemStatus;
 
 /**
- * Flattens {@code TrackedItem} + its {@code Product} into one response
- * shape, matching the GET/POST /tracked-items examples in the REST
- * endpoint reference doc — callers shouldn't need a second request just to
- * see the current price of what they're tracking.
+ * Flattens {@code TrackedItem} + its {@code Product} into one response.
+ * Prefer {@link #from(TrackedItem, Product)} when you already have a fully
+ * loaded product (avoids LazyInitializationException after scrape TX).
  */
 public record TrackedItemResponse(
     UUID id,
@@ -24,13 +23,13 @@ public record TrackedItemResponse(
     Site site,
     BigDecimal lastKnownPrice,
     StockStatus lastKnownStockStatus,
+    String thumbnailUrl,
     BigDecimal priceThreshold,
     boolean notifyOnRestockOnly,
     TrackedItemStatus status,
     Instant createdAt) {
 
-  public static TrackedItemResponse from(TrackedItem trackedItem) {
-    Product product = trackedItem.getProduct();
+  public static TrackedItemResponse from(TrackedItem trackedItem, Product product) {
     return new TrackedItemResponse(
         trackedItem.getId(),
         product.getId(),
@@ -39,9 +38,14 @@ public record TrackedItemResponse(
         product.getSite(),
         product.getLastKnownPrice(),
         product.getLastKnownStockStatus(),
+        product.getThumbnailUrl(),
         trackedItem.getPriceThreshold(),
         trackedItem.isNotifyOnRestockOnly(),
         trackedItem.getStatus(),
         trackedItem.getCreatedAt());
+  }
+
+  public static TrackedItemResponse from(TrackedItem trackedItem) {
+    return from(trackedItem, trackedItem.getProduct());
   }
 }

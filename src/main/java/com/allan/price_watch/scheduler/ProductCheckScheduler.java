@@ -7,6 +7,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.trackeditem.repository.TrackedItemRepository;
 
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -41,10 +42,11 @@ public class ProductCheckScheduler {
     this.rabbitTemplate = rabbitTemplate;
   }
 
-  @Scheduled(cron = "${app.scheduler.product-check-cron}")
+  @Scheduled(cron = "${app.scheduler.product-check-cron:0 0 */4 * * *}")
   @SchedulerLock(name = "productCheckScheduler", lockAtLeastFor = "PT30S", lockAtMostFor = "PT10M")
   public void enqueueChecks() {
-    List<UUID> productIds = trackedItemRepository.findDistinctActiveProductIds();
+    List<UUID> productIds = trackedItemRepository.findDistinctActiveHealthyProductIds(
+        ProductHealth.UNHEALTHY_FAILURE_THRESHOLD);
 
     for (UUID productId : productIds) {
       rabbitTemplate.convertAndSend(EXCHANGE, PRODUCT_CHECK_QUEUE, productId);

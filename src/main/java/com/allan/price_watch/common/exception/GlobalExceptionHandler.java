@@ -7,8 +7,11 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -36,6 +39,13 @@ public class GlobalExceptionHandler {
 
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+  private final boolean exposeErrorDetails;
+
+  public GlobalExceptionHandler(
+      @Value("${app.errors.expose-details:false}") boolean exposeErrorDetails) {
+    this.exposeErrorDetails = exposeErrorDetails;
+  }
+
   @ExceptionHandler(ApplicationException.class)
   public ProblemDetail handleApplicationException(ApplicationException ex, WebRequest request) {
     ProblemDetail problem = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getMessage());
@@ -62,6 +72,34 @@ public class GlobalExceptionHandler {
     return problem;
   }
 
+  /**
+   * Missing / unreadable JSON body (common Postman misconfig: no Body tab,
+   * form-data instead of raw JSON, or Content-Type wrong).
+   */
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ProblemDetail handleUnreadableBody(HttpMessageNotReadableException ex, WebRequest request) {
+    log.warn("Unreadable request body on {}: {}", requestPath(request), ex.getMessage());
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        HttpStatus.BAD_REQUEST,
+        "Request body is missing or is not valid JSON. "
+            + "In Postman: Body → raw → JSON, and send {\"email\":\"...\",\"password\":\"...\"}.");
+    problem.setTitle("Bad Request");
+    problem.setInstance(URI.create(requestPath(request)));
+    problem.setProperty("timestamp", Instant.now());
+    return problem;
+  }
+
+  @ExceptionHandler(DataIntegrityViolationException.class)
+  public ProblemDetail handleDataIntegrity(DataIntegrityViolationException ex, WebRequest request) {
+    log.warn("Data integrity violation on {}: {}", requestPath(request), ex.getMostSpecificCause().getMessage());
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        HttpStatus.CONFLICT, "Request conflicts with existing data.");
+    problem.setTitle("Conflict");
+    problem.setInstance(URI.create(requestPath(request)));
+    problem.setProperty("timestamp", Instant.now());
+    return problem;
+  }
+
   @ExceptionHandler(Exception.class)
   public ProblemDetail handleUnexpectedException(Exception ex, WebRequest request) {
     log.error("Unhandled exception on {}", requestPath(request), ex);
@@ -71,6 +109,11 @@ public class GlobalExceptionHandler {
     problem.setTitle("Internal Server Error");
     problem.setInstance(URI.create(requestPath(request)));
     problem.setProperty("timestamp", Instant.now());
+    // Local only: show the real exception so Postman debugging is possible.
+    if (exposeErrorDetails) {
+      problem.setProperty("exception", ex.getClass().getSimpleName());
+      problem.setProperty("message", ex.getMessage());
+    }
     return problem;
   }
 

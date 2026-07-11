@@ -8,13 +8,9 @@ import org.springframework.stereotype.Component;
 import com.allan.price_watch.common.exception.UnsupportedSiteException;
 
 /**
- * Spring injects every {@code Scraper} bean found on the classpath here —
- * currently none, since {@code UniqloScraper}/{@code HAndMScraper} haven't
- * been built yet (that's fine, an empty list is a valid injection target,
- * this class just won't be able to resolve anything until they exist).
- * Adding a new supported site later is purely additive: implement
- * {@code Scraper}, and it shows up here automatically without touching
- * this class.
+ * Resolves a {@link Scraper} for a product URL. Spring injects every
+ * {@code Scraper} bean on the classpath. Adding a storefront is additive:
+ * implement {@code Scraper}, no change to this class.
  */
 @Component
 public class ScraperFactory {
