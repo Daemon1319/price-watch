@@ -193,6 +193,9 @@ spring:
 app:
   errors:
     expose-details: true
+  # Keep default 15m access TTL so refresh path is actually exercised.
+  jwt:
+    access-token-ttl: 15m
 
 logging:
   level:

@@ -35,14 +35,21 @@ public class RefreshCookieService {
     response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("", Duration.ZERO).toString());
   }
 
-  /** Prefers the cookie; falls back to a body token for non-browser clients. */
+  /**
+   * Prefers an explicit body token over the cookie.
+   *
+   * <p>Cross-origin SPAs (e.g. Vercel → local API) keep the rotated refresh token in
+   * localStorage and send it in the body. The browser may still attach an older cookie
+   * for {@code localhost}; if we preferred the cookie, every refresh after the first
+   * would 401 on a revoked token while the body held a valid one.
+   */
   public String resolveRawRefreshToken(HttpServletRequest request, String bodyToken) {
+    if (bodyToken != null && !bodyToken.isBlank()) {
+      return bodyToken;
+    }
     String fromCookie = readCookie(request);
     if (fromCookie != null && !fromCookie.isBlank()) {
       return fromCookie;
-    }
-    if (bodyToken != null && !bodyToken.isBlank()) {
-      return bodyToken;
     }
     return null;
   }
