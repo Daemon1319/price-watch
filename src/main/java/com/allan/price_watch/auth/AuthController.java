@@ -77,10 +77,13 @@ public class AuthController {
     return ResponseEntity.noContent().build();
   }
 
-  /** Writes the refresh cookie and returns the access token JSON body. */
+  /** Writes the refresh cookie and returns access + refresh in the JSON body. */
   private ResponseEntity<LoginResponse> okWithRefreshCookie(
       IssuedTokens tokens, HttpServletResponse response) {
     refreshCookieService.setRefreshCookie(response, tokens.rawRefreshToken());
-    return ResponseEntity.ok(new LoginResponse(tokens.accessToken(), tokens.expiresIn()));
+    return ResponseEntity.ok(new LoginResponse(
+        tokens.accessToken(),
+        tokens.expiresIn(),
+        tokens.rawRefreshToken()));
   }
 }
