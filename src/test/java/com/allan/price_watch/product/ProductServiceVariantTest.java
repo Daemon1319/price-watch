@@ -66,6 +66,7 @@ class ProductServiceVariantTest {
         priceHistoryRepository,
         trackedItemRepository,
         urlNormalizer,
+        catalog,
         scraperFactory,
         transactionTemplate);
 
@@ -121,11 +122,38 @@ class ProductServiceVariantTest {
         .build();
 
     when(productRepository.findByNormalizedUrl(expectedUrl)).thenReturn(Optional.of(existing));
+    when(productRepository.save(any(Product.class))).thenAnswer(inv -> inv.getArgument(0));
 
     Product result = productService.findOrCreateByUrl(
         "https://www.uniqlo.com/ph/en/products/E482465-000?colorCode=COL60&sizeCode=SMA003");
 
     assertEquals(existing, result);
+    // Pre-V8 / incomplete rows: codes live only in the URL until backfilled.
+    assertEquals("COL60", result.getColorCode());
+    assertEquals("SMA003", result.getSizeCode());
+    assertEquals("S", result.getSizeName());
+  }
+
+  @Test
+  void findOrCreateBackfillsColor69FromUrl() {
+    String expectedUrl =
+        "https://www.uniqlo.com/ph/en/products/E485455-000?colorCode=COL69&sizeCode=SMA003";
+    Product existing = Product.builder()
+        .normalizedUrl(expectedUrl)
+        .originalUrl(expectedUrl)
+        .site(Site.UNIQLO)
+        .lastKnownStockStatus(StockStatus.IN_STOCK)
+        .build();
+
+    when(productRepository.findByNormalizedUrl(expectedUrl)).thenReturn(Optional.of(existing));
+    when(productRepository.save(any(Product.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    Product result = productService.findOrCreateByUrl(expectedUrl);
+
+    assertEquals("COL69", result.getColorCode());
+    assertEquals("Navy", result.getColorName());
+    assertEquals("SMA003", result.getSizeCode());
+    assertEquals("S", result.getSizeName());
   }
 
   @Test

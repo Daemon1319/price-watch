@@ -23,6 +23,7 @@ import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.scraper.ScrapeResult;
 import com.allan.price_watch.scraper.Scraper;
 import com.allan.price_watch.scraper.ScraperFactory;
+import com.allan.price_watch.scraper.site.UniqloCatalog;
 import com.allan.price_watch.scraper.site.UniqloScraper;
 import com.allan.price_watch.trackeditem.entity.PriceHistory;
 import com.allan.price_watch.trackeditem.repository.PriceHistoryRepository;
@@ -36,6 +37,7 @@ public class ProductService {
   private final PriceHistoryRepository priceHistoryRepository;
   private final TrackedItemRepository trackedItemRepository;
   private final UrlNormalizer urlNormalizer;
+  private final UniqloCatalog uniqloCatalog;
   private final ScraperFactory scraperFactory;
   private final TransactionTemplate transactionTemplate;
 
@@ -44,12 +46,14 @@ public class ProductService {
       PriceHistoryRepository priceHistoryRepository,
       TrackedItemRepository trackedItemRepository,
       UrlNormalizer urlNormalizer,
+      UniqloCatalog uniqloCatalog,
       ScraperFactory scraperFactory,
       TransactionTemplate transactionTemplate) {
     this.productRepository = productRepository;
     this.priceHistoryRepository = priceHistoryRepository;
     this.trackedItemRepository = trackedItemRepository;
     this.urlNormalizer = urlNormalizer;
+    this.uniqloCatalog = uniqloCatalog;
     this.scraperFactory = scraperFactory;
     this.transactionTemplate = transactionTemplate;
   }
@@ -79,6 +83,7 @@ public class ProductService {
     requireVariantIfNeeded(scraper.getSite(), normalizedUrl);
 
     return productRepository.findByNormalizedUrl(normalizedUrl)
+        .map(existing -> backfillVariantFieldsIfMissing(existing, normalizedUrl))
         .orElseGet(() -> createFromScrape(rawUrl, normalizedUrl, uri, scraper));
   }
 
@@ -165,7 +170,17 @@ public class ProductService {
   private Product persistNewProduct(
       String originalUrl, String normalizedUrl, Scraper scraper, ScrapeResult result) {
     return productRepository.findByNormalizedUrl(normalizedUrl)
+        .map(existing -> backfillVariantFieldsIfMissing(existing, normalizedUrl, result))
         .orElseGet(() -> {
+          String colorCode = firstNonBlank(result.colorCode(), urlNormalizer.colorCode(normalizedUrl));
+          String sizeCode = firstNonBlank(result.sizeCode(), urlNormalizer.sizeCode(normalizedUrl));
+          String colorName = firstNonBlank(
+              result.colorName(),
+              uniqloCatalog.colorDisplayName(colorCode).orElse(null));
+          String sizeName = firstNonBlank(
+              result.sizeName(),
+              uniqloCatalog.sizeDisplayName(sizeCode).orElse(null));
+
           Product product = Product.builder()
               .name(result.name())
               .normalizedUrl(normalizedUrl)
@@ -174,10 +189,10 @@ public class ProductService {
               .lastKnownPrice(result.price())
               .lastKnownStockStatus(result.stockStatus())
               .thumbnailUrl(result.thumbnailUrl())
-              .colorCode(result.colorCode())
-              .colorName(result.colorName())
-              .sizeCode(result.sizeCode())
-              .sizeName(result.sizeName())
+              .colorCode(colorCode)
+              .colorName(colorName)
+              .sizeCode(sizeCode)
+              .sizeName(sizeName)
               .lastCheckedAt(Instant.now())
               .consecutiveFailures(0)
               .build();
@@ -194,5 +209,73 @@ public class ProductService {
 
           return product;
         });
+  }
+
+  /**
+   * Older rows may have colorCode/sizeCode only in {@code normalized_url} (pre-V8 columns)
+   * or after a scrape that matched SKU but left names empty. Fill gaps so the API can display them.
+   */
+  private Product backfillVariantFieldsIfMissing(Product product, String normalizedUrl) {
+    return backfillVariantFieldsIfMissing(product, normalizedUrl, null);
+  }
+
+  private Product backfillVariantFieldsIfMissing(
+      Product product, String normalizedUrl, ScrapeResult result) {
+    boolean dirty = false;
+
+    String colorCode = product.getColorCode();
+    if (isBlank(colorCode)) {
+      colorCode = result != null ? firstNonBlank(result.colorCode(), null) : null;
+      colorCode = firstNonBlank(colorCode, urlNormalizer.colorCode(normalizedUrl));
+      if (!isBlank(colorCode)) {
+        product.setColorCode(colorCode);
+        dirty = true;
+      }
+    }
+
+    String sizeCode = product.getSizeCode();
+    if (isBlank(sizeCode)) {
+      sizeCode = result != null ? firstNonBlank(result.sizeCode(), null) : null;
+      sizeCode = firstNonBlank(sizeCode, urlNormalizer.sizeCode(normalizedUrl));
+      if (!isBlank(sizeCode)) {
+        product.setSizeCode(sizeCode);
+        dirty = true;
+      }
+    }
+
+    if (isBlank(product.getColorName())) {
+      String colorName = result != null ? result.colorName() : null;
+      if (isBlank(colorName)) {
+        colorName = uniqloCatalog.colorDisplayName(product.getColorCode()).orElse(null);
+      }
+      if (!isBlank(colorName)) {
+        product.setColorName(colorName);
+        dirty = true;
+      }
+    }
+
+    if (isBlank(product.getSizeName())) {
+      String sizeName = result != null ? result.sizeName() : null;
+      if (isBlank(sizeName)) {
+        sizeName = uniqloCatalog.sizeDisplayName(product.getSizeCode()).orElse(null);
+      }
+      if (!isBlank(sizeName)) {
+        product.setSizeName(sizeName);
+        dirty = true;
+      }
+    }
+
+    return dirty ? productRepository.save(product) : product;
+  }
+
+  private static String firstNonBlank(String primary, String fallback) {
+    if (!isBlank(primary)) {
+      return primary;
+    }
+    return isBlank(fallback) ? null : fallback;
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.isBlank();
   }
 }

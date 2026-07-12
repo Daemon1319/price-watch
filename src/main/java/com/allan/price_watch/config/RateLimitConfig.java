@@ -7,6 +7,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 
 import com.allan.price_watch.security.RateLimitFilter;
@@ -15,7 +16,7 @@ import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy;
 import io.github.bucket4j.distributed.proxy.ProxyManager;
-import io.github.bucket4j.redis.lettuce.cas.LettuceBasedProxyManager;
+import io.github.bucket4j.redis.lettuce.Bucket4jLettuce;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -38,27 +39,41 @@ public class RateLimitConfig {
     this.redisClient = RedisClient.create(uri);
     this.connection = redisClient.connect(RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE));
 
-    return LettuceBasedProxyManager.builderFor(connection)
-        .withExpirationStrategy(
+    return Bucket4jLettuce.casBasedBuilder(connection)
+        .expirationAfterWrite(
             ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(Duration.ofMinutes(2)))
         .build();
   }
 
+  /**
+   * Mirrors Spring's Redis factory (from {@code spring.data.redis.url} or host/port props)
+   * so Bucket4j uses the same TLS/username/password as the rest of the app.
+   */
   private static RedisURI resolveRedisUri(RedisConnectionFactory connectionFactory) {
-    if (connectionFactory instanceof LettuceConnectionFactory lettuce) {
-      RedisURI.Builder builder = RedisURI.builder()
-          .withHost(lettuce.getHostName())
-          .withPort(lettuce.getPort());
-      String password = lettuce.getPassword();
-      if (password != null && !password.isBlank()) {
-        builder.withPassword(password.toCharArray());
-      }
-      if (lettuce.getDatabase() > 0) {
-        builder.withDatabase(lettuce.getDatabase());
-      }
-      return builder.build();
+    if (!(connectionFactory instanceof LettuceConnectionFactory lettuce)) {
+      return RedisURI.builder().withHost("localhost").withPort(6379).build();
     }
-    return RedisURI.builder().withHost("localhost").withPort(6379).build();
+
+    RedisURI.Builder builder = RedisURI.builder()
+        .withHost(lettuce.getHostName())
+        .withPort(lettuce.getPort())
+        .withSsl(lettuce.isUseSsl());
+
+    RedisStandaloneConfiguration standalone = lettuce.getStandaloneConfiguration();
+    String username = standalone != null ? standalone.getUsername() : null;
+    String password = lettuce.getPassword();
+
+    if (username != null && !username.isBlank()) {
+      char[] pwd = password != null ? password.toCharArray() : new char[0];
+      builder.withAuthentication(username, pwd);
+    } else if (password != null && !password.isBlank()) {
+      builder.withPassword(password.toCharArray());
+    }
+
+    if (lettuce.getDatabase() > 0) {
+      builder.withDatabase(lettuce.getDatabase());
+    }
+    return builder.build();
   }
 
   /** General API rate-limit capacity and refill. */

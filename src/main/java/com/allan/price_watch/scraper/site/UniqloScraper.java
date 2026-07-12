@@ -309,11 +309,14 @@ public class UniqloScraper implements Scraper {
       return all;
     }
 
+    // Normalize both sides — API may return "69" while the URL has "COL69".
     List<JsonNode> filtered = all.stream()
         .filter(l2 -> colorCode == null
-            || colorCode.equalsIgnoreCase(l2.path("color").path("code").asString("")))
+            || colorCode.equalsIgnoreCase(
+                catalog.normalizeVariantCode(l2.path("color").path("code").asString(null))))
         .filter(l2 -> sizeCode == null
-            || sizeCode.equalsIgnoreCase(l2.path("size").path("code").asString("")))
+            || sizeCode.equalsIgnoreCase(
+                catalog.normalizeVariantCode(l2.path("size").path("code").asString(null))))
         .toList();
 
     // Exact color+size must match; partial filters fall back only when empty
