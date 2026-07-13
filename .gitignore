@@ -1,0 +1,13 @@
+# Editor / IDE (local only)
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env / secrets at monorepo root
+.env
+.env.*
