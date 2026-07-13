@@ -11,3 +11,6 @@ desktop.ini
 # Env / secrets at monorepo root
 .env
 .env.*
+
+# Empty leftover nest from monorepo hoist (delete locally when no process locks it)
+/price_watch/
