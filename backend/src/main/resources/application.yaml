@@ -1,0 +1,215 @@
+# Shared defaults — no hosts, accounts, or secrets.
+# Credentials and localhost wiring live only under the `local` profile.
+spring:
+  application:
+    name: price-watch
+
+  # Overridable via SPRING_PROFILES_ACTIVE / -Dspring.profiles.active.
+  # `default` (not `active`) so env/CLI can replace it cleanly.
+  profiles:
+    default: local
+
+  threads:
+    virtual:
+      enabled: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          '[batch_size]': 25
+        '[order_inserts]': true
+        '[order_updates]': true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jackson:
+    default-property-inclusion: non_null
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 10m
+
+  # Compose is local-only; other profiles must not pull up Docker deps.
+  docker:
+    compose:
+      enabled: false
+      file: compose.yaml
+      skip:
+        in-tests: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-ttl: 15m
+  auth:
+    refresh-cookie:
+      name: pw_refresh
+      path: /api/v1/auth
+      max-age-days: 7
+      same-site: ${REFRESH_COOKIE_SAME_SITE:None}
+      secure: ${REFRESH_COOKIE_SECURE:true}
+  scheduler:
+    product-check-cron: "0 0 */4 * * *"
+  outbox:
+    poll-interval-ms: 5000
+    batch-size: 50
+  rate-limit:
+    capacity: 60
+    refill-per-minute: 60
+    auth-capacity: 10
+    auth-refill-per-minute: 10
+    trust-forwarded-headers: ${RATE_LIMIT_TRUST_FORWARDED_HEADERS:false}
+  tracking:
+    max-items-per-user: ${TRACKING_MAX_ITEMS_PER_USER:50}
+  mail:
+    from: ${MAIL_FROM}
+
+logging:
+  level:
+    root: INFO
+    '[com.allan.price_watch]': INFO
+
+---
+# Local: Docker Compose + MailHog. Only profile with embedded credentials.
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  # Explicit hosts so we never depend on Compose connection-details guessing.
+  datasource:
+    # 127.0.0.1 (not localhost): on Windows, localhost can resolve to ::1 and miss Docker's port map.
+    url: jdbc:postgresql://127.0.0.1:5433/pricewatch
+    username: pricewatch
+    password: pricewatch
+
+  # V6 was edited after apply; repair realigns flyway_schema_history. Never enable outside local.
+  flyway:
+    repair-on-migrate: true
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: pricewatch
+    password: pricewatch
+
+  # MailHog SMTP. UI: http://localhost:8025
+  mail:
+    host: localhost
+    port: 1025
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+  docker:
+    compose:
+      enabled: true
+      # start-only: bring deps up if needed; do not stop them when the app exits.
+      lifecycle-management: start-only
+
+app:
+  cors:
+    allowed-origins: http://localhost:3000
+  jwt:
+    # Solo-dev only — never reuse outside local.
+    secret: dGVzdC1zZWNyZXQtdGhhdC1pcy1sb25nLWVub3VnaC0zMmJ5dGVzISE=
+  mail:
+    from: pricewatch@localhost
+  errors:
+    expose-details: true
+
+logging:
+  level:
+    '[com.allan.price_watch]': DEBUG
+
+---
+# App on this machine + managed cloud deps (Neon / Upstash / CloudAMQP / real SMTP).
+# No secrets here — set via environment (Spring binds SPRING_* / MAIL_FROM automatically).
+#
+#   $env:SPRING_PROFILES_ACTIVE = "local-cloud"
+#   $env:SPRING_DATASOURCE_URL = "jdbc:postgresql://...neon.tech/db?sslmode=require"
+#   $env:SPRING_DATASOURCE_USERNAME = "..."
+#   $env:SPRING_DATASOURCE_PASSWORD = "..."
+#   $env:SPRING_DATA_REDIS_URL = "rediss://default:PASSWORD@....upstash.io:6379"
+#   $env:SPRING_RABBITMQ_ADDRESSES = "amqps://user:pass@....rmq.cloudamqp.com/vhost"
+#   $env:SPRING_MAIL_HOST = "smtp-relay.brevo.com"
+#   $env:SPRING_MAIL_PORT = "587"
+#   $env:SPRING_MAIL_USERNAME = "....@smtp-brevo.com"
+#   $env:SPRING_MAIL_PASSWORD = "..."   # SMTP key, not API key
+#   $env:MAIL_FROM = "your-brevo-login-email"
+#   $env:JWT_SECRET = "..."
+#   $env:CORS_ALLOWED_ORIGINS = "http://localhost:3000"
+spring:
+  config:
+    activate:
+      on-profile: local-cloud
+
+  data:
+    redis:
+      ssl:
+        enabled: true
+
+  rabbitmq:
+    ssl:
+      enabled: true
+
+  mail:
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+app:
+  errors:
+    expose-details: true
+  # Keep default 15m access TTL so refresh path is actually exercised.
+  jwt:
+    access-token-ttl: 15m
+
+logging:
+  level:
+    '[com.allan.price_watch]': DEBUG
+
+---
+# Deployed environment — all secrets/hosts from env; fail fast if missing.
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  jwt:
+    secret: ${JWT_SECRET}

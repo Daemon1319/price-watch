@@ -1,0 +1,23 @@
+package com.allan.price_watch.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.provider.redis.spring.RedisLockProvider;
+import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
+
+/** Enables scheduled jobs with ShedLock so only one instance runs each task. */
+@Configuration
+@EnableScheduling
+@EnableSchedulerLock(defaultLockAtMostFor = "PT5M")
+public class SchedulingConfig {
+
+  /** Redis-backed lock provider for @SchedulerLock. */
+  @Bean
+  public LockProvider lockProvider(RedisConnectionFactory connectionFactory) {
+    return new RedisLockProvider(connectionFactory, "price-watch");
+  }
+}
