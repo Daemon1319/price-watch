@@ -16,6 +16,7 @@ import com.allan.price_watch.auth.repository.UserRepository;
 import com.allan.price_watch.common.exception.DuplicateTrackingException;
 import com.allan.price_watch.common.exception.TrackedItemNotFoundException;
 import com.allan.price_watch.common.exception.TrackingLimitExceededException;
+import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.product.ProductService;
 import com.allan.price_watch.product.entity.Product;
 import com.allan.price_watch.trackeditem.dto.CreateTrackedItemRequest;
@@ -88,12 +89,27 @@ public class TrackedItemService {
     return TrackedItemResponse.from(trackedItem, product);
   }
 
-  /** Lists the user's tracked items, optionally filtered by status. */
+  /**
+   * Lists the user's tracked items.
+   *
+   * @param unhealthyOnly when true, only items whose product is unhealthy (ignores status filter)
+   * @param statuses optional ACTIVE/PAUSED filter when not unhealthy-only
+   */
   @Transactional(readOnly = true)
-  public Page<TrackedItemResponse> list(UUID userId, Collection<TrackedItemStatus> statuses, Pageable pageable) {
-    Page<TrackedItem> page = (statuses == null || statuses.isEmpty())
-        ? trackedItemRepository.findByUserId(userId, pageable)
-        : trackedItemRepository.findByUserIdAndStatusIn(userId, statuses, pageable);
+  public Page<TrackedItemResponse> list(
+      UUID userId,
+      Collection<TrackedItemStatus> statuses,
+      boolean unhealthyOnly,
+      Pageable pageable) {
+    Page<TrackedItem> page;
+    if (unhealthyOnly) {
+      page = trackedItemRepository.findByUserIdAndProduct_ConsecutiveFailuresGreaterThanEqual(
+          userId, ProductHealth.UNHEALTHY_FAILURE_THRESHOLD, pageable);
+    } else if (statuses == null || statuses.isEmpty()) {
+      page = trackedItemRepository.findByUserId(userId, pageable);
+    } else {
+      page = trackedItemRepository.findByUserIdAndStatusIn(userId, statuses, pageable);
+    }
 
     return page.map(TrackedItemResponse::from);
   }

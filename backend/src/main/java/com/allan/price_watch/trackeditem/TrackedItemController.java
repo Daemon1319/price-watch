@@ -50,13 +50,19 @@ public class TrackedItemController {
         .body(response);
   }
 
-  /** Lists the user's tracked items with optional status filter. */
+  /**
+   * Lists the user's tracked items.
+   * Use {@code unhealthy=true} for products past the scrape-failure threshold,
+   * or {@code status=ACTIVE|PAUSED} for subscription status.
+   */
   @GetMapping
   public PageResponse<TrackedItemResponse> list(
       @AuthenticationPrincipal UUID userId,
       @RequestParam(required = false) List<String> status,
+      @RequestParam(required = false, defaultValue = "false") boolean unhealthy,
       @PageableDefault(size = 20) Pageable pageable) {
-    return PageResponse.from(trackedItemService.list(userId, parseStatuses(status), pageable));
+    return PageResponse.from(
+        trackedItemService.list(userId, parseStatuses(status), unhealthy, pageable));
   }
 
   /** Returns a single tracked item owned by the user. */

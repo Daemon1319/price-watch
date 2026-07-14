@@ -82,7 +82,7 @@ function DashboardContent() {
               value={data.unhealthyCount}
               hint={
                 data.unhealthyCount > 0
-                  ? "Scrape failures — re-enable checks from the product page"
+                  ? "Open Tracked items → Unhealthy filter"
                   : "All scrapers healthy"
               }
               accent={data.unhealthyCount > 0 ? "warn" : "default"}

@@ -32,6 +32,11 @@ public interface TrackedItemRepository extends JpaRepository<TrackedItem, UUID> 
   Page<TrackedItem> findByUserIdAndStatusIn(
       UUID userId, Collection<TrackedItemStatus> statuses, Pageable pageable);
 
+  /** Paged list of items whose product is past the unhealthy failure threshold. */
+  @EntityGraph(attributePaths = "product")
+  Page<TrackedItem> findByUserIdAndProduct_ConsecutiveFailuresGreaterThanEqual(
+      UUID userId, int minFailures, Pageable pageable);
+
   /** Ownership-safe fetch by tracked-item id and user id. */
   @EntityGraph(attributePaths = "product")
   Optional<TrackedItem> findByIdAndUserId(UUID id, UUID userId);
