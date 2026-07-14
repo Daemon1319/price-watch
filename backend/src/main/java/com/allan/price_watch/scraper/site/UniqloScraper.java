@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 
 import com.allan.price_watch.common.exception.InvalidVariantException;
 import com.allan.price_watch.common.exception.ScrapeFailedException;
+import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.dto.ProductVariantOption;
 import com.allan.price_watch.product.dto.ProductVariantsResponse;
 import com.allan.price_watch.product.dto.ProductVariantsResponse.ColorOption;
@@ -34,7 +35,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Scrapes Uniqlo product pages via their commerce API.
+ * Scrapes Uniqlo product pages via their commerce API (v5).
+ *
+ * <p>Product metadata comes from {@code /api/commerce/v5/{lang}/products/{id}}. Per-SKU stock and
+ * price maps come from
+ * {@code /api/commerce/v5/{lang}/products/{id}/price-groups/{priceGroup}/l2s}. Both require the
+ * {@code x-fr-clientid} header used by Uniqlo's web SPA.
  *
  * <p>Color/size display labels live in {@link UniqloCatalog}
  * ({@code classpath:scraper/uniqlo/catalog.json}), not here.
@@ -44,6 +50,10 @@ public class UniqloScraper implements Scraper {
 
   private static final Pattern LOCALE_AND_PRODUCT_ID_PATTERN =
       Pattern.compile("^/([a-z]{2})/([a-z]{2})/products/([A-Z0-9-]+)", Pattern.CASE_INSENSITIVE);
+
+  private static final String USER_AGENT =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
   /** Allowed Uniqlo apex domains (exact host or subdomain only). */
   private static final Set<String> ALLOWED_HOST_ROOTS = Set.of(
@@ -113,11 +123,16 @@ public class UniqloScraper implements Scraper {
   @Override
   public ScrapeResult fetch(URI url) {
     ParsedProductUrl parsed = parseProductUrl(url);
-    JsonNode item = fetchProductItem(apiUrl(url, parsed), parsed.productId());
+    JsonNode product = fetchProduct(url, parsed);
+    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroupOf(product));
 
     String colorCode = parsed.colorCode();
     String sizeCode = parsed.sizeCode();
-    List<JsonNode> relevantL2s = filterL2s(item.path("l2s"), colorCode, sizeCode);
+    List<JsonNode> relevantL2s = filterL2s(product.path("l2s"), colorCode, sizeCode);
+    if (relevantL2s.isEmpty() && l2Catalog.l2s().isArray()) {
+      // Product payload sometimes omits L2 rows; fall back to the price-group catalog.
+      relevantL2s = filterL2s(l2Catalog.l2s(), colorCode, sizeCode);
+    }
 
     if (colorCode != null && sizeCode != null && relevantL2s.isEmpty()) {
       throw new InvalidVariantException(colorCode, sizeCode);
@@ -137,17 +152,17 @@ public class UniqloScraper implements Scraper {
       }
     }
     if (colorName == null && colorCode != null) {
-      colorName = colorNameFromCatalog(item.path("colors"), colorCode);
+      colorName = colorNameFromCatalog(product.path("colors"), colorCode);
     }
     if (sizeName == null && sizeCode != null) {
-      sizeName = sizeNameFromCatalog(item.path("sizes"), sizeCode);
+      sizeName = sizeNameFromCatalog(product.path("sizes"), sizeCode);
     }
 
     return new ScrapeResult(
-        item.path("name").asString(null),
-        extractPrice(item, relevantL2s, url),
-        extractStockStatus(relevantL2s),
-        buildThumbnailUrl(parsed.locale(), parsed.productId(), colorCode, item),
+        product.path("name").asString(null),
+        extractPrice(product, relevantL2s, l2Catalog, url),
+        extractStockStatus(relevantL2s, l2Catalog),
+        buildThumbnailUrl(parsed.locale(), parsed.productId(), colorCode, product),
         catalog.normalizeVariantCode(colorCode),
         colorName,
         catalog.normalizeVariantCode(sizeCode),
@@ -160,10 +175,11 @@ public class UniqloScraper implements Scraper {
    */
   public ProductVariantsResponse listVariants(URI url) {
     ParsedProductUrl parsed = parseProductUrl(url);
-    JsonNode item = fetchProductItem(apiUrl(url, parsed), parsed.productId());
+    JsonNode product = fetchProduct(url, parsed);
+    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroupOf(product));
 
     List<ColorOption> colors = new ArrayList<>();
-    JsonNode colorsNode = item.path("colors");
+    JsonNode colorsNode = product.path("colors");
     if (colorsNode.isArray()) {
       for (JsonNode c : colorsNode) {
         String code = catalog.normalizeVariantCode(c.path("code").asString(null));
@@ -178,7 +194,7 @@ public class UniqloScraper implements Scraper {
     }
 
     List<SizeOption> sizes = new ArrayList<>();
-    JsonNode sizesNode = item.path("sizes");
+    JsonNode sizesNode = product.path("sizes");
     if (sizesNode.isArray()) {
       for (JsonNode s : sizesNode) {
         String code = catalog.normalizeVariantCode(s.path("code").asString(null));
@@ -192,8 +208,13 @@ public class UniqloScraper implements Scraper {
       }
     }
 
+    // Prefer product L2s (often include color/size names); fall back to price-group L2s.
+    JsonNode l2s = product.path("l2s");
+    if (!l2s.isArray() || l2s.size() == 0) {
+      l2s = l2Catalog.l2s();
+    }
+
     List<ProductVariantOption> variants = new ArrayList<>();
-    JsonNode l2s = item.path("l2s");
     if (l2s.isArray()) {
       for (JsonNode l2 : l2s) {
         String colorCode = catalog.normalizeVariantCode(l2.path("color").path("code").asString(null));
@@ -201,18 +222,27 @@ public class UniqloScraper implements Scraper {
         if (colorCode == null || sizeCode == null) {
           continue;
         }
-        BigDecimal price = priceFromNode(l2.path("prices"));
+        String l2Id = blankToNull(l2.path("l2Id").asString(null));
+        BigDecimal price = priceForL2(l2, l2Id, l2Catalog);
         if (price == null) {
-          price = priceFromNode(item.path("prices"));
+          price = priceFromNode(product.path("prices"));
+        }
+        String colorName = blankToNull(l2.path("color").path("name").asString(null));
+        if (colorName == null) {
+          colorName = colorNameFromCatalog(product.path("colors"), colorCode);
+        }
+        String sizeName = blankToNull(l2.path("size").path("name").asString(null));
+        if (sizeName == null) {
+          sizeName = sizeNameFromCatalog(product.path("sizes"), sizeCode);
         }
         variants.add(new ProductVariantOption(
             colorCode,
-            blankToNull(l2.path("color").path("name").asString(null)),
+            colorName,
             sizeCode,
-            blankToNull(l2.path("size").path("name").asString(null)),
+            sizeName,
             price,
-            stockStatusFromL2(l2),
-            buildThumbnailUrl(parsed.locale(), parsed.productId(), colorCode, item)));
+            stockStatusForL2(l2, l2Id, l2Catalog),
+            buildThumbnailUrl(parsed.locale(), parsed.productId(), colorCode, product)));
       }
     }
 
@@ -220,7 +250,7 @@ public class UniqloScraper implements Scraper {
         + "/" + parsed.locale() + "/" + parsed.language() + "/products/" + parsed.productId();
 
     return new ProductVariantsResponse(
-        item.path("name").asString(null),
+        product.path("name").asString(null),
         parsed.productId(),
         baseUrl,
         List.copyOf(colors),
@@ -241,23 +271,66 @@ public class UniqloScraper implements Scraper {
         catalog.normalizeVariantCode(queryParam(url, "sizeCode")));
   }
 
-  private URI apiUrl(URI pageUrl, ParsedProductUrl parsed) {
-    return URI.create("https://" + pageUrl.getHost() + "/" + parsed.locale() + "/api/commerce/v3/"
-        + parsed.language() + "/products/" + parsed.productId() + "?isV2Review=true&withStocks=true");
+  private URI productApiUrl(URI pageUrl, ParsedProductUrl parsed) {
+    return URI.create("https://" + pageUrl.getHost() + "/" + parsed.locale() + "/api/commerce/v5/"
+        + parsed.language() + "/products/" + parsed.productId()
+        + "?isV2Review=true&withStocks=true");
   }
 
-  /** GETs the product JSON item from Uniqlo's commerce API. */
-  private JsonNode fetchProductItem(URI apiUrl, String productId) {
-    String referer = "https://" + apiUrl.getHost() + "/";
+  private URI l2sApiUrl(URI pageUrl, ParsedProductUrl parsed, String priceGroup) {
+    return URI.create("https://" + pageUrl.getHost() + "/" + parsed.locale() + "/api/commerce/v5/"
+        + parsed.language() + "/products/" + parsed.productId()
+        + "/price-groups/" + priceGroup
+        + "/l2s?withPrices=true&withStocks=true&includePreviousPrice=false"
+        + "&withMemberPricing=false&httpFailure=true");
+  }
+
+  /** Client id used by Uniqlo's web SPA for the given locale (e.g. {@code uq.ph.web-spa}). */
+  static String clientIdForLocale(String locale) {
+    String loc = (locale == null || locale.isBlank()) ? "ph" : locale.toLowerCase(Locale.ROOT);
+    return "uq." + loc + ".web-spa";
+  }
+
+  private static String priceGroupOf(JsonNode product) {
+    String priceGroup = blankToNull(product.path("priceGroup").asString(null));
+    return priceGroup != null ? priceGroup : "00";
+  }
+
+  /** Product document from commerce v5 ({@code result} object — no {@code items} wrapper). */
+  private JsonNode fetchProduct(URI pageUrl, ParsedProductUrl parsed) {
+    JsonNode result = fetchOkResult(productApiUrl(pageUrl, parsed), parsed);
+    if (result.isMissingNode() || result.isNull() || result.isEmpty()) {
+      throw new ScrapeFailedException(
+          ScrapeFailureReason.PRODUCT_UNAVAILABLE,
+          "Uniqlo API returned empty product for " + parsed.productId());
+    }
+    return result;
+  }
+
+  /**
+   * Price-group L2 catalog: parallel maps of {@code stocks} and {@code prices} keyed by
+   * {@code l2Id}, plus an optional {@code l2s} array.
+   */
+  private L2Catalog fetchL2Catalog(URI pageUrl, ParsedProductUrl parsed, String priceGroup) {
+    JsonNode result = fetchOkResult(l2sApiUrl(pageUrl, parsed, priceGroup), parsed);
+    return new L2Catalog(
+        result.path("l2s"),
+        result.path("stocks"),
+        result.path("prices"));
+  }
+
+  private JsonNode fetchOkResult(URI apiUrl, ParsedProductUrl parsed) {
+    String productId = parsed.productId();
+    String host = apiUrl.getHost();
+    String origin = "https://" + host;
     HttpRequest request = HttpRequest.newBuilder(apiUrl)
         .version(HttpClient.Version.HTTP_1_1)
         .header("Accept", "application/json, text/plain, */*")
         .header("Accept-Language", "en-US,en;q=0.9")
-        .header("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .header("Referer", referer)
-        .header("Origin", "https://" + apiUrl.getHost())
+        .header("User-Agent", USER_AGENT)
+        .header("Referer", origin + "/" + parsed.locale() + "/" + parsed.language() + "/")
+        .header("Origin", origin)
+        .header("x-fr-clientid", clientIdForLocale(parsed.locale()))
         .timeout(Duration.ofSeconds(20))
         .GET()
         .build();
@@ -266,34 +339,53 @@ public class UniqloScraper implements Scraper {
     try {
       response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     } catch (IOException e) {
-      throw new ScrapeFailedException("Could not reach Uniqlo API for " + productId + ": " + e.getMessage());
+      throw new ScrapeFailedException(
+          ScrapeFailureReason.NETWORK,
+          "Could not reach Uniqlo API for " + productId + ": " + e.getMessage());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new ScrapeFailedException("Interrupted while calling Uniqlo API for " + productId);
+      throw new ScrapeFailedException(
+          ScrapeFailureReason.NETWORK,
+          "Interrupted while calling Uniqlo API for " + productId);
     }
 
-    if (response.statusCode() != 200) {
+    int status = response.statusCode();
+    if (status != 200) {
       throw new ScrapeFailedException(
-          "Uniqlo API returned status " + response.statusCode() + " for " + productId);
+          reasonFromHttpStatus(status),
+          "Uniqlo API returned status " + status + " for " + productId);
     }
 
     JsonNode root;
     try {
       root = jsonMapper.readTree(response.body());
     } catch (JacksonException e) {
-      throw new ScrapeFailedException("Could not parse Uniqlo API response for " + productId);
+      throw new ScrapeFailedException(
+          ScrapeFailureReason.PARSE,
+          "Could not parse Uniqlo API response for " + productId);
     }
 
     if (!"ok".equals(root.path("status").asString(null))) {
-      throw new ScrapeFailedException("Uniqlo API returned non-ok status for " + productId);
+      throw new ScrapeFailedException(
+          ScrapeFailureReason.PRODUCT_UNAVAILABLE,
+          "Uniqlo API returned non-ok status for " + productId);
     }
 
-    JsonNode items = root.path("result").path("items");
-    if (!items.isArray() || items.size() == 0) {
-      throw new ScrapeFailedException("Uniqlo API returned no items for product " + productId);
-    }
+    return root.path("result");
+  }
 
-    return items.get(0);
+  /** Maps HTTP status to a failure reason (404 → product gone, 5xx → transient, etc.). */
+  static ScrapeFailureReason reasonFromHttpStatus(int status) {
+    if (status == 404) {
+      return ScrapeFailureReason.PRODUCT_UNAVAILABLE;
+    }
+    if (status >= 500) {
+      return ScrapeFailureReason.HTTP_5XX;
+    }
+    if (status >= 400) {
+      return ScrapeFailureReason.HTTP_4XX;
+    }
+    return ScrapeFailureReason.UNKNOWN;
   }
 
   /** Restricts L2 variants to the color/size from the product URL when set. */
@@ -327,19 +419,30 @@ public class UniqloScraper implements Scraper {
     return filtered.isEmpty() ? List.of() : filtered;
   }
 
-  /** Prefers variant price when available, otherwise top-level product price. */
-  private BigDecimal extractPrice(JsonNode item, List<JsonNode> relevantL2s, URI url) {
+  /** Prefers variant price maps / L2 prices, otherwise top-level product price. */
+  private BigDecimal extractPrice(
+      JsonNode product, List<JsonNode> relevantL2s, L2Catalog l2Catalog, URI url) {
     for (JsonNode l2 : relevantL2s) {
-      BigDecimal fromL2 = priceFromNode(l2.path("prices"));
+      BigDecimal fromL2 = priceForL2(l2, blankToNull(l2.path("l2Id").asString(null)), l2Catalog);
       if (fromL2 != null) {
         return fromL2;
       }
     }
-    BigDecimal topLevel = priceFromNode(item.path("prices"));
+    BigDecimal topLevel = priceFromNode(product.path("prices"));
     if (topLevel != null) {
       return topLevel;
     }
     throw new ScrapeFailedException("Could not find a price in Uniqlo API response for " + url);
+  }
+
+  private BigDecimal priceForL2(JsonNode l2, String l2Id, L2Catalog l2Catalog) {
+    if (l2Id != null) {
+      BigDecimal fromMap = priceFromNode(l2Catalog.prices().path(l2Id));
+      if (fromMap != null) {
+        return fromMap;
+      }
+    }
+    return priceFromNode(l2.path("prices"));
   }
 
   private BigDecimal priceFromNode(JsonNode prices) {
@@ -349,11 +452,18 @@ public class UniqloScraper implements Scraper {
     JsonNode promo = prices.path("promo");
     JsonNode priceNode = (!promo.isMissingNode() && !promo.isNull()) ? promo : prices.path("base");
     String rawValue = priceNode.path("value").asString(null);
+    if (rawValue == null && priceNode.path("value").isNumber()) {
+      rawValue = priceNode.path("value").asString();
+    }
+    // Jackson may expose numeric values without string form depending on parser settings.
+    if (rawValue == null && priceNode.has("value") && !priceNode.path("value").isNull()) {
+      rawValue = priceNode.get("value").toString();
+    }
     return rawValue != null ? new BigDecimal(rawValue) : null;
   }
 
   /** Aggregates stock across relevant variants (any in stock → IN_STOCK). */
-  private StockStatus extractStockStatus(List<JsonNode> relevantL2s) {
+  private StockStatus extractStockStatus(List<JsonNode> relevantL2s, L2Catalog l2Catalog) {
     if (relevantL2s.isEmpty()) {
       return StockStatus.UNKNOWN;
     }
@@ -362,7 +472,8 @@ public class UniqloScraper implements Scraper {
     boolean anyAvailable = false;
 
     for (JsonNode l2 : relevantL2s) {
-      StockStatus status = stockStatusFromL2(l2);
+      StockStatus status = stockStatusForL2(
+          l2, blankToNull(l2.path("l2Id").asString(null)), l2Catalog);
       if (status == StockStatus.UNKNOWN) {
         continue;
       }
@@ -379,9 +490,18 @@ public class UniqloScraper implements Scraper {
     return anyAvailable ? StockStatus.IN_STOCK : StockStatus.OUT_OF_STOCK;
   }
 
-  private static StockStatus stockStatusFromL2(JsonNode l2) {
-    JsonNode stock = l2.path("stock");
-    if (stock.isMissingNode() || stock.isNull()) {
+  private StockStatus stockStatusForL2(JsonNode l2, String l2Id, L2Catalog l2Catalog) {
+    if (l2Id != null) {
+      StockStatus fromMap = stockStatusFromNode(l2Catalog.stocks().path(l2Id));
+      if (fromMap != StockStatus.UNKNOWN) {
+        return fromMap;
+      }
+    }
+    return stockStatusFromNode(l2.path("stock"));
+  }
+
+  private static StockStatus stockStatusFromNode(JsonNode stock) {
+    if (stock == null || stock.isMissingNode() || stock.isNull() || stock.isEmpty()) {
       return StockStatus.UNKNOWN;
     }
     String code = stock.path("statusCode").asString("");
@@ -394,16 +514,28 @@ public class UniqloScraper implements Scraper {
     return StockStatus.UNKNOWN;
   }
 
-  /** Builds a Uniqlo CDN thumbnail URL for the product/color. */
+  /**
+   * Thumbnail for the product/color. Prefers commerce API {@code images.main} (full CDN URL;
+   * may be {@code ph/phgoods_…} or {@code AsianCommon/goods_…}), then chip, then a locale-based
+   * guess. Never fails the scrape if images are missing.
+   */
   private String buildThumbnailUrl(String locale, String productId, String colorCode, JsonNode item) {
-    String goodsId = goodsIdFromProductId(productId);
-    if (goodsId == null) {
-      return null;
+    String colorDigits = resolveColorDigits(colorCode, item);
+
+    String fromApi = thumbnailFromApiImages(item.path("images"), colorDigits);
+    if (fromApi != null) {
+      return fromApi;
     }
 
+    return synthesizedThumbnailUrl(locale, productId, colorDigits);
+  }
+
+  /** Picks display color digits from the requested code, representative color, or first color. */
+  private String resolveColorDigits(String colorCode, JsonNode item) {
     String colorDigits = colorDigitsFromCode(colorCode);
     if (colorDigits == null) {
-      colorDigits = colorDigitsFromCode(item.path("representative").path("color").path("code").asString(null));
+      colorDigits = colorDigitsFromCode(
+          item.path("representative").path("color").path("code").asString(null));
     }
     if (colorDigits == null) {
       JsonNode colors = item.path("colors");
@@ -411,12 +543,35 @@ public class UniqloScraper implements Scraper {
         colorDigits = colorDigitsFromCode(colors.get(0).path("code").asString(null));
       }
     }
-    if (colorDigits == null) {
-      colorDigits = "00";
-    }
+    return colorDigits != null ? colorDigits : "00";
+  }
 
-    return "https://image.uniqlo.com/UQ/ST3/" + locale + "/imagesgoods/" + goodsId
-        + "/item/phgoods_" + colorDigits + "_" + goodsId + "_3x4.jpg?width=369";
+  /**
+   * Reads full image URLs from Uniqlo's {@code images.main[color]} / {@code images.chip[color]}
+   * maps. Keys are zero-padded color digits (e.g. {@code "00"}, {@code "69"}).
+   */
+  static String thumbnailFromApiImages(JsonNode images, String colorDigits) {
+    if (images == null || images.isMissingNode() || images.isNull() || colorDigits == null) {
+      return null;
+    }
+    String fromMain = blankToNull(images.path("main").path(colorDigits).path("image").asString(null));
+    if (fromMain != null) {
+      return fromMain;
+    }
+    // Some colors only ship a chip asset under AsianCommon / regional CDN.
+    return blankToNull(images.path("chip").path(colorDigits).asString(null));
+  }
+
+  /** Legacy guess when the product payload has no {@code images} map (should be rare on v5). */
+  private static String synthesizedThumbnailUrl(String locale, String productId, String colorDigits) {
+    String goodsId = goodsIdFromProductId(productId);
+    if (goodsId == null) {
+      return null;
+    }
+    String digits = colorDigits != null ? colorDigits : "00";
+    String loc = (locale == null || locale.isBlank()) ? "ph" : locale;
+    return "https://image.uniqlo.com/UQ/ST3/" + loc + "/imagesgoods/" + goodsId
+        + "/item/phgoods_" + digits + "_" + goodsId + "_3x4.jpg?width=369";
   }
 
   /** Extracts numeric goods id from Uniqlo product ids like E471809-000. */
@@ -493,5 +648,9 @@ public class UniqloScraper implements Scraper {
       String productId,
       String colorCode,
       String sizeCode) {
+  }
+
+  /** Parallel L2 price/stock maps from the price-groups endpoint. */
+  private record L2Catalog(JsonNode l2s, JsonNode stocks, JsonNode prices) {
   }
 }

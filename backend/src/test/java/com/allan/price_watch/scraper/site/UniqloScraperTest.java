@@ -57,4 +57,66 @@ class UniqloScraperTest {
     assertEquals("COL09", UniqloScraper.queryParam(url, "colorCode"));
     assertEquals("SMA004", UniqloScraper.queryParam(url, "sizeCode"));
   }
+
+  @Test
+  void clientIdFollowsLocaleWebSpaPattern() {
+    assertEquals("uq.ph.web-spa", UniqloScraper.clientIdForLocale("ph"));
+    assertEquals("uq.sg.web-spa", UniqloScraper.clientIdForLocale("SG"));
+    assertEquals("uq.ph.web-spa", UniqloScraper.clientIdForLocale(null));
+  }
+
+  @Test
+  void httpStatusMapsToFailureReason() {
+    assertEquals(
+        com.allan.price_watch.product.entity.ScrapeFailureReason.PRODUCT_UNAVAILABLE,
+        UniqloScraper.reasonFromHttpStatus(404));
+    assertEquals(
+        com.allan.price_watch.product.entity.ScrapeFailureReason.HTTP_5XX,
+        UniqloScraper.reasonFromHttpStatus(503));
+    assertEquals(
+        com.allan.price_watch.product.entity.ScrapeFailureReason.HTTP_4XX,
+        UniqloScraper.reasonFromHttpStatus(401));
+  }
+
+  @Test
+  void thumbnailPrefersApiMainImageOverGuess() {
+    var images = jsonMapper.readTree("""
+        {
+          "main": {
+            "00": {
+              "image": "https://image.uniqlo.com/UQ/ST3/AsianCommon/imagesgoods/465185/item/goods_00_465185_3x4.jpg"
+            }
+          },
+          "chip": {
+            "00": "https://image.uniqlo.com/UQ/ST3/AsianCommon/imagesgoods/465185/chip/goods_00_465185_chip.jpg"
+          }
+        }
+        """);
+    assertEquals(
+        "https://image.uniqlo.com/UQ/ST3/AsianCommon/imagesgoods/465185/item/goods_00_465185_3x4.jpg",
+        UniqloScraper.thumbnailFromApiImages(images, "00"));
+  }
+
+  @Test
+  void thumbnailFallsBackToChipWhenMainMissing() {
+    var images = jsonMapper.readTree("""
+        {
+          "main": {},
+          "chip": {
+            "69": "https://image.uniqlo.com/UQ/ST3/AsianCommon/imagesgoods/465185/chip/goods_69_465185_chip.jpg"
+          }
+        }
+        """);
+    assertEquals(
+        "https://image.uniqlo.com/UQ/ST3/AsianCommon/imagesgoods/465185/chip/goods_69_465185_chip.jpg",
+        UniqloScraper.thumbnailFromApiImages(images, "69"));
+  }
+
+  @Test
+  void thumbnailFromApiImagesReturnsNullWhenAbsent() {
+    assertNull(UniqloScraper.thumbnailFromApiImages(jsonMapper.readTree("{}"), "00"));
+    assertNull(UniqloScraper.thumbnailFromApiImages(null, "00"));
+  }
+
+  private final JsonMapper jsonMapper = new JsonMapper();
 }

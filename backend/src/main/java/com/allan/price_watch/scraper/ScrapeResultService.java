@@ -15,7 +15,9 @@ import com.allan.price_watch.notification.OutboxPayloadKeys;
 import com.allan.price_watch.notification.entity.OutboxEvent;
 import com.allan.price_watch.notification.entity.OutboxEventType;
 import com.allan.price_watch.notification.repository.OutboxEventRepository;
+import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.product.entity.Product;
+import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.entity.StockStatus;
 import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.trackeditem.entity.PriceHistory;
@@ -72,6 +74,8 @@ public class ScrapeResultService {
     product.setLastKnownStockStatus(result.stockStatus());
     product.setLastCheckedAt(Instant.now());
     product.setConsecutiveFailures(0);
+    product.setLastFailureReason(null);
+    product.setLastFailureDetail(null);
     productRepository.save(product);
 
     if ((priceChanged || stockChanged) && result.price() != null) {
@@ -105,15 +109,39 @@ public class ScrapeResultService {
     meterRegistry.counter("scrape.success", "site", product.getSite().name()).increment();
   }
 
-  /** Increments consecutive failures after a scrape error. */
+  /** Records a classified scrape failure and may park the product as unhealthy. */
   @Transactional
-  public void recordFailure(Product product) {
-    product.setConsecutiveFailures(product.getConsecutiveFailures() + 1);
+  public void recordFailure(Product product, ScrapeFailureReason reason, String detail) {
+    ScrapeFailureReason effective = reason != null ? reason : ScrapeFailureReason.UNKNOWN;
+    int increment = ProductHealth.failureIncrement(effective);
+    int next = product.getConsecutiveFailures() + increment;
+    if (next > ProductHealth.UNHEALTHY_FAILURE_THRESHOLD) {
+      next = ProductHealth.UNHEALTHY_FAILURE_THRESHOLD;
+    }
+    // Permanent: jump to threshold so scheduler stops immediately.
+    if (effective.isPermanent()) {
+      next = ProductHealth.UNHEALTHY_FAILURE_THRESHOLD;
+    }
+
+    product.setConsecutiveFailures(next);
+    product.setLastFailureReason(effective);
+    product.setLastFailureDetail(truncateDetail(detail));
     product.setLastCheckedAt(Instant.now());
     productRepository.save(product);
 
     invalidateDashboardCaches(product.getId());
-    meterRegistry.counter("scrape.failure", "site", product.getSite().name()).increment();
+    meterRegistry.counter(
+        "scrape.failure",
+        "site", product.getSite().name(),
+        "reason", effective.name()).increment();
+  }
+
+  private static String truncateDetail(String detail) {
+    if (detail == null || detail.isBlank()) {
+      return null;
+    }
+    String trimmed = detail.trim();
+    return trimmed.length() <= 500 ? trimmed : trimmed.substring(0, 500);
   }
 
   /** Copies color/size codes and display names from a scrape when present. */

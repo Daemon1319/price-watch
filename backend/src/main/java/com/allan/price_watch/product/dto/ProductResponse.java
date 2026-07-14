@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.product.entity.Product;
+import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.entity.Site;
 import com.allan.price_watch.product.entity.StockStatus;
 
@@ -23,7 +24,9 @@ public record ProductResponse(
     String sizeCode,
     String sizeName,
     Instant lastCheckedAt,
-    boolean healthy) {
+    boolean healthy,
+    ScrapeFailureReason lastFailureReason,
+    String lastFailureDetail) {
 
   public static ProductResponse from(Product product) {
     return new ProductResponse(
@@ -39,6 +42,8 @@ public record ProductResponse(
         product.getSizeCode(),
         product.getSizeName(),
         product.getLastCheckedAt(),
-        ProductHealth.isHealthy(product.getConsecutiveFailures()));
+        ProductHealth.isHealthy(product.getConsecutiveFailures()),
+        product.getLastFailureReason(),
+        product.getLastFailureDetail());
   }
 }

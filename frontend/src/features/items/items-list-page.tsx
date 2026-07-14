@@ -18,7 +18,10 @@ import {
   Skeleton,
   Spinner,
 } from "@/components/ui";
-import { listProductVariants } from "@/lib/api/products";
+import {
+  listProductVariants,
+  requestCheckAllProducts,
+} from "@/lib/api/products";
 import {
   createTrackedItem,
   listTrackedItems,
@@ -79,6 +82,8 @@ function ItemsContent() {
   );
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [checkingAll, setCheckingAll] = useState(false);
+  const [checkAllHint, setCheckAllHint] = useState<string | null>(null);
 
   const [url, setUrl] = useState("");
   const [threshold, setThreshold] = useState("");
@@ -242,20 +247,57 @@ function ItemsContent() {
 
   const totalPages = Math.max(1, Math.ceil(total / size));
 
+  async function onRefreshAll() {
+    setCheckingAll(true);
+    setError(null);
+    setCheckAllHint(null);
+    try {
+      const res = await requestCheckAllProducts();
+      setCheckAllHint(
+        res.queued === 0
+          ? "No active items to refresh."
+          : `Queued ${res.queued} product${res.queued === 1 ? "" : "s"}. Prices update in the background (about 1 hour cooldown before next full refresh).`,
+      );
+      window.setTimeout(() => {
+        void load();
+      }, 5000);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setCheckingAll(false);
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Tracked items"
         description="Paste a Uniqlo URL (colorCode/sizeCode in the link are preselected). Optional minimum drop amount filters price-drop alerts."
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            className="sm:hidden"
-            onClick={() => setFormOpen((o) => !o)}
-          >
-            {formOpen ? "Hide form" : "Track new"}
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onRefreshAll}
+              disabled={checkingAll || loading || total === 0}
+            >
+              {checkingAll ? (
+                <>
+                  <Spinner /> Queuing…
+                </>
+              ) : (
+                "Refresh all prices"
+              )}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="sm:hidden"
+              onClick={() => setFormOpen((o) => !o)}
+            >
+              {formOpen ? "Hide form" : "Track new"}
+            </Button>
+          </>
         }
       />
 
@@ -448,6 +490,9 @@ function ItemsContent() {
       </div>
 
       <ErrorAlert error={error} />
+      {checkAllHint && (
+        <p className="mb-4 text-sm text-[var(--muted)]">{checkAllHint}</p>
+      )}
 
       {loading && items.length === 0 ? (
         <div className="space-y-2">

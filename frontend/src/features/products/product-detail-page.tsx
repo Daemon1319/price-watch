@@ -27,11 +27,13 @@ import {
   getPriceHistory,
   getProduct,
   reenableChecks,
+  requestProductCheck,
 } from "@/lib/api/products";
 import {
   formatDateTime,
   formatPrice,
   formatVariant,
+  scrapeFailureLabel,
   stockLabel,
 } from "@/lib/format";
 import type { PriceHistoryPoint, Product } from "@/lib/types";
@@ -45,6 +47,8 @@ function ProductContent() {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [reenabling, setReenabling] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkHint, setCheckHint] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,10 +88,29 @@ function ProductContent() {
     setError(null);
     try {
       setProduct(await reenableChecks(id));
+      setCheckHint("Checks re-enabled. Use Refresh now or wait for the next schedule.");
     } catch (err) {
       setError(err);
     } finally {
       setReenabling(false);
+    }
+  }
+
+  async function onCheckNow() {
+    setChecking(true);
+    setError(null);
+    setCheckHint(null);
+    try {
+      await requestProductCheck(id);
+      setCheckHint("Check queued. Price and image update in a few seconds — pull to refresh.");
+      // Give the worker a moment, then reload snapshot.
+      window.setTimeout(() => {
+        void load();
+      }, 4000);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -127,15 +150,34 @@ function ProductContent() {
             : "Live product snapshot and recorded price samples."
         }
         actions={
-          <Link href="/items">
-            <Button variant="secondary" size="sm">
-              Back to items
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onCheckNow}
+              disabled={checking || loading}
+            >
+              {checking ? (
+                <>
+                  <Spinner /> Queuing…
+                </>
+              ) : (
+                "Refresh now"
+              )}
             </Button>
-          </Link>
+            <Link href="/items">
+              <Button variant="secondary" size="sm">
+                Back to items
+              </Button>
+            </Link>
+          </div>
         }
       />
 
       <ErrorAlert error={error} />
+      {checkHint && (
+        <p className="mb-4 text-sm text-[var(--muted)]">{checkHint}</p>
+      )}
 
       <div className="mb-4 grid gap-4 lg:mb-6 lg:grid-cols-2">
         <Card>
@@ -199,9 +241,20 @@ function ProductContent() {
           {!product.healthy && (
             <div className="mt-5 rounded-xl border border-[var(--warn)]/20 bg-[var(--warn-soft)] p-4">
               <p className="text-sm text-[var(--warn)]">
-                Checks paused after repeated scrape failures. Re-enable when the
-                site or scraper is healthy again.
+                {scrapeFailureLabel(product.lastFailureReason)}
               </p>
+              {product.lastFailureDetail && (
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  {product.lastFailureDetail}
+                </p>
+              )}
+              {(product.lastFailureReason === "VARIANT_MISSING" ||
+                product.lastFailureReason === "PRODUCT_UNAVAILABLE") && (
+                <p className="mt-2 text-xs text-[var(--muted)]">
+                  Re-enable won’t bring this SKU back if Uniqlo removed it. Track
+                  a different color/size, or delete this item.
+                </p>
+              )}
               <Button
                 className="mt-3 w-full sm:w-auto"
                 onClick={onReenable}

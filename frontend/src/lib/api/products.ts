@@ -38,3 +38,17 @@ export function reenableChecks(id: string) {
     method: "POST",
   });
 }
+
+/** Queues an immediate scrape (202). Rate limited 15m/product, 20/user/hour. */
+export function requestProductCheck(id: string) {
+  return apiFetch<Product>(`/api/v1/products/${id}/check`, {
+    method: "POST",
+  });
+}
+
+/** Queues scrapes for all ACTIVE tracked products (202). Cooldown 1h per user. */
+export function requestCheckAllProducts() {
+  return apiFetch<{ queued: number }>(`/api/v1/products/check-all`, {
+    method: "POST",
+  });
+}
