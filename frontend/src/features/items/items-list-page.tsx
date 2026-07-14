@@ -59,11 +59,12 @@ function pickVariantSelection(
   if (fromUrl.colorCode && colorCodes.has(fromUrl.colorCode)) {
     color = fromUrl.colorCode;
   } else if (fromUrl.colorDisplayCode) {
+    const display = fromUrl.colorDisplayCode;
     const byDisplay = res.colors.find(
       (c) =>
-        c.displayCode === fromUrl.colorDisplayCode ||
-        c.displayCode === fromUrl.colorDisplayCode.replace(/^0+/, "") ||
-        c.code === `COL${fromUrl.colorDisplayCode}`,
+        c.displayCode === display ||
+        c.displayCode === display.replace(/^0+/, "") ||
+        c.code === `COL${display}`,
     );
     if (byDisplay) color = byDisplay.code;
   } else if (res.colors.length === 1) {
@@ -71,15 +72,15 @@ function pickVariantSelection(
   }
 
   let size = "";
+  const sizeDisplay = fromUrl.sizeDisplayCode;
   const sizeCandidates = [
     fromUrl.sizeCode,
-    fromUrl.sizeDisplayCode
+    sizeDisplay
       ? res.sizes.find(
           (s) =>
-            s.displayCode === fromUrl.sizeDisplayCode ||
-            s.displayCode === fromUrl.sizeDisplayCode.replace(/^0+/, "") ||
-            s.displayCode?.padStart(3, "0") ===
-              fromUrl.sizeDisplayCode.padStart(3, "0"),
+            s.displayCode === sizeDisplay ||
+            s.displayCode === sizeDisplay.replace(/^0+/, "") ||
+            s.displayCode?.padStart(3, "0") === sizeDisplay.padStart(3, "0"),
         )?.code
       : null,
   ].filter(Boolean) as string[];
