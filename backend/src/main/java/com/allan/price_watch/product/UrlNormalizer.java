@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -15,13 +16,27 @@ import org.springframework.stereotype.Component;
 
 import com.allan.price_watch.scraper.site.UniqloCatalog;
 
-/** Canonicalizes product URLs so the same page always maps to one dedup key. */
+/**
+ * Canonicalizes product URLs so the same page always maps to one dedup key.
+ *
+ * <p>Supports legacy Uniqlo query params ({@code colorCode}/{@code sizeCode}) and the
+ * newer storefront shape:
+ * {@code /products/E…-000/00?colorDisplayCode=18&sizeDisplayCode=005}.
+ */
 @Component
 public class UrlNormalizer {
 
   // Tracking/analytics params only — keep product params like colorCode/sizeCode.
   private static final Pattern TRACKING_PARAM = Pattern.compile(
       "^(utm_[a-z0-9_]+|gclid|fbclid|igshid|ref|mc_[a-z]+|spm|clickid|msclkid|twclid|yclid|pk_campaign|pk_kwd)=.*",
+      Pattern.CASE_INSENSITIVE);
+
+  /**
+   * Uniqlo product path with optional price-group suffix:
+   * {@code /ph/en/products/E475367-000} or {@code /ph/en/products/E475367-000/00}.
+   */
+  private static final Pattern UNIQLO_PRODUCT_PATH = Pattern.compile(
+      "^(/(?i)[a-z]{2}/[a-z]{2}/products/[A-Z0-9-]+)(?:/\\d{1,4})?/?$",
       Pattern.CASE_INSENSITIVE);
 
   private final UniqloCatalog uniqloCatalog;
@@ -45,6 +60,7 @@ public class UrlNormalizer {
     if (path.length() > 1 && path.endsWith("/")) {
       path = path.substring(0, path.length() - 1);
     }
+    path = stripUniqloPriceGroupSuffix(path);
 
     String query = normalizeQuery(uri.getRawQuery());
 
@@ -70,6 +86,12 @@ public class UrlNormalizer {
     URI uri = URI.create(rawUrl.trim());
     Map<String, String> params = parseQuery(uri.getRawQuery());
 
+    // Drop new-style display params; we always persist canonical colorCode/sizeCode.
+    params.remove("colorDisplayCode");
+    params.remove("sizeDisplayCode");
+    params.remove("colordisplaycode");
+    params.remove("sizedisplaycode");
+
     if (colorCode != null && !colorCode.isBlank()) {
       params.put("colorCode", uniqloCatalog.normalizeColorCode(colorCode));
     }
@@ -80,6 +102,7 @@ public class UrlNormalizer {
     String scheme = uri.getScheme() == null ? "https" : uri.getScheme();
     String host = uri.getHost() == null ? "" : uri.getHost();
     String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+    path = stripUniqloPriceGroupSuffix(path);
 
     StringBuilder result = new StringBuilder(scheme).append("://").append(host).append(path);
     String query = encodeQuery(params);
@@ -89,17 +112,42 @@ public class UrlNormalizer {
     return result.toString();
   }
 
-  /** Reads colorCode from a (possibly already normalized) URL. */
+  /** Reads colorCode from a URL (also maps {@code colorDisplayCode}). */
   public String colorCode(String url) {
-    return queryParam(url, "colorCode");
+    String fromCode = queryParam(url, "colorCode");
+    if (fromCode != null) {
+      return uniqloCatalog.normalizeColorCode(fromCode);
+    }
+    String display = queryParam(url, "colorDisplayCode");
+    return display != null ? uniqloCatalog.normalizeColorCode(display) : null;
   }
 
-  /** Reads sizeCode from a (possibly already normalized) URL. */
+  /** Reads sizeCode from a URL (also maps {@code sizeDisplayCode}). */
   public String sizeCode(String url) {
-    return queryParam(url, "sizeCode");
+    String fromCode = queryParam(url, "sizeCode");
+    if (fromCode != null) {
+      return uniqloCatalog.normalizeSizeCode(fromCode);
+    }
+    String display = queryParam(url, "sizeDisplayCode");
+    return display != null ? uniqloCatalog.normalizeSizeCode(display) : null;
   }
 
-  /** Drops tracking params, uppercases variant codes, and sorts remaining ones for stable keys. */
+  /**
+   * Drops {@code /00}-style price-group suffixes so
+   * {@code .../products/E…-000/00} and {@code .../products/E…-000} share one key.
+   */
+  static String stripUniqloPriceGroupSuffix(String path) {
+    if (path == null || path.isBlank()) {
+      return path;
+    }
+    Matcher m = UNIQLO_PRODUCT_PATH.matcher(path);
+    if (m.matches()) {
+      return m.group(1);
+    }
+    return path;
+  }
+
+  /** Drops tracking params, maps display codes → colorCode/sizeCode, sorts for stable keys. */
   private String normalizeQuery(String rawQuery) {
     if (rawQuery == null || rawQuery.isBlank()) {
       return "";
@@ -108,7 +156,20 @@ public class UrlNormalizer {
     Map<String, String> params = parseQuery(rawQuery);
     params.entrySet().removeIf(e -> TRACKING_PARAM.matcher(e.getKey() + "=" + e.getValue()).matches());
 
-    // Canonicalize Uniqlo variant codes so COL09, col09, and 09 share one product row.
+    // New Uniqlo storefront: colorDisplayCode / sizeDisplayCode → canonical codes.
+    String displayColor = firstParam(params, "colorDisplayCode");
+    String displaySize = firstParam(params, "sizeDisplayCode");
+    removeParamIgnoreCase(params, "colorDisplayCode");
+    removeParamIgnoreCase(params, "sizeDisplayCode");
+
+    if (!params.containsKey("colorCode") && displayColor != null) {
+      params.put("colorCode", displayColor);
+    }
+    if (!params.containsKey("sizeCode") && displaySize != null) {
+      params.put("sizeCode", displaySize);
+    }
+
+    // Canonicalize so COL09, col09, 09, and colorDisplayCode=9 share one product row.
     if (params.containsKey("colorCode")) {
       params.put("colorCode", uniqloCatalog.normalizeColorCode(params.get("colorCode")));
     }
@@ -120,6 +181,19 @@ public class UrlNormalizer {
         .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
         .map(e -> encode(e.getKey()) + "=" + encode(e.getValue()))
         .collect(Collectors.joining("&"));
+  }
+
+  private static String firstParam(Map<String, String> params, String name) {
+    for (Map.Entry<String, String> e : params.entrySet()) {
+      if (e.getKey().equalsIgnoreCase(name) && e.getValue() != null && !e.getValue().isBlank()) {
+        return e.getValue();
+      }
+    }
+    return null;
+  }
+
+  private static void removeParamIgnoreCase(Map<String, String> params, String name) {
+    params.keySet().removeIf(k -> k.equalsIgnoreCase(name));
   }
 
   private static Map<String, String> parseQuery(String rawQuery) {
@@ -173,13 +247,7 @@ public class UrlNormalizer {
           if (value.isBlank()) {
             return null;
           }
-          if ("colorCode".equalsIgnoreCase(name)) {
-            return uniqloCatalog.normalizeColorCode(value);
-          }
-          if ("sizeCode".equalsIgnoreCase(name)) {
-            return uniqloCatalog.normalizeSizeCode(value);
-          }
-          return value.toUpperCase(Locale.ROOT);
+          return value;
         })
         .filter(v -> v != null)
         .findFirst()

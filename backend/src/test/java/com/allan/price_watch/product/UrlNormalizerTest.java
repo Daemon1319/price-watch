@@ -67,4 +67,25 @@ class UrlNormalizerTest {
     assertEquals("INS029", normalizer.sizeCode(url));
     assertNull(normalizer.colorCode("https://www.uniqlo.com/ph/en/products/E471809-000"));
   }
+
+  @Test
+  void mapsNewStorefrontDisplayCodesAndStripsPriceGroupPath() {
+    String raw =
+        "https://www.uniqlo.com/ph/en/products/E475367-000/00?colorDisplayCode=18&sizeDisplayCode=005";
+
+    assertEquals(
+        "https://www.uniqlo.com/ph/en/products/E475367-000?colorCode=COL18&sizeCode=SMA005",
+        normalizer.normalize(raw));
+    assertEquals("COL18", normalizer.colorCode(raw));
+    assertEquals("SMA005", normalizer.sizeCode(raw));
+  }
+
+  @Test
+  void mapsLargeSizeDisplayCodeToInchPrefix() {
+    String raw =
+        "https://www.uniqlo.com/ph/en/products/E487742-000/00?colorDisplayCode=30&sizeDisplayCode=028";
+    assertEquals(
+        "https://www.uniqlo.com/ph/en/products/E487742-000?colorCode=COL30&sizeCode=INS028",
+        normalizer.normalize(raw));
+  }
 }
