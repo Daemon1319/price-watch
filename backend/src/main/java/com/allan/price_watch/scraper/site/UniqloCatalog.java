@@ -123,12 +123,26 @@ public class UniqloCatalog {
     return String.format(Locale.ROOT, "%02d", Integer.parseInt(numeric));
   }
 
-  /** Uppercases size codes; inch sizes stay {@code INSxxx}. */
+  /**
+   * Uppercases size codes; inch sizes stay {@code INSxxx}.
+   * Bare display digits (e.g. {@code 005} from {@code sizeDisplayCode}) map to
+   * {@code SMA###} when &lt; 20 and {@code INS###} when ≥ 20 (waist/inseam style).
+   */
   public String normalizeSizeCode(String raw) {
     if (raw == null || raw.isBlank()) {
       return null;
     }
-    return raw.trim().toUpperCase(Locale.ROOT);
+    String upper = raw.trim().toUpperCase(Locale.ROOT);
+    if (upper.matches("(SMA|INS|SMW|SMB)\\d+")) {
+      return upper;
+    }
+    if (upper.matches("\\d{1,3}")) {
+      int n = Integer.parseInt(upper);
+      String pad = String.format(Locale.ROOT, "%03d", n);
+      // Apparel size chips are small numbers; larger values are inch sizes.
+      return n >= 20 ? "INS" + pad : "SMA" + pad;
+    }
+    return upper;
   }
 
   /**

@@ -34,7 +34,10 @@ import {
   sizeOptionLabel,
   stockLabel,
 } from "@/lib/format";
-import { parseUniqloVariantFromUrl } from "@/lib/uniqlo-url";
+import {
+  isUniqloProductUrl,
+  parseUniqloVariantFromUrl,
+} from "@/lib/uniqlo-url";
 import type {
   ProductVariantOption,
   ProductVariantsResponse,
@@ -43,7 +46,7 @@ import type {
 } from "@/lib/types";
 import { useRetryCooldown } from "@/lib/hooks/use-retry-cooldown";
 
-/** Prefer codes from the product URL; fall back to single-color auto-pick. */
+/** Prefer codes from the product URL (incl. new displayCode query); fall back to single-color. */
 function pickVariantSelection(
   res: ProductVariantsResponse,
   rawUrl: string,
@@ -55,19 +58,42 @@ function pickVariantSelection(
   let color = "";
   if (fromUrl.colorCode && colorCodes.has(fromUrl.colorCode)) {
     color = fromUrl.colorCode;
+  } else if (fromUrl.colorDisplayCode) {
+    const display = fromUrl.colorDisplayCode;
+    const byDisplay = res.colors.find(
+      (c) =>
+        c.displayCode === display ||
+        c.displayCode === display.replace(/^0+/, "") ||
+        c.code === `COL${display}`,
+    );
+    if (byDisplay) color = byDisplay.code;
   } else if (res.colors.length === 1) {
     color = res.colors[0].code;
   }
 
   let size = "";
-  if (fromUrl.sizeCode) {
+  const sizeDisplay = fromUrl.sizeDisplayCode;
+  const sizeCandidates = [
+    fromUrl.sizeCode,
+    sizeDisplay
+      ? res.sizes.find(
+          (s) =>
+            s.displayCode === sizeDisplay ||
+            s.displayCode === sizeDisplay.replace(/^0+/, "") ||
+            s.displayCode?.padStart(3, "0") === sizeDisplay.padStart(3, "0"),
+        )?.code
+      : null,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of sizeCandidates) {
     const sizeValidForColor =
       !color ||
       res.variants.some(
-        (v) => v.colorCode === color && v.sizeCode === fromUrl.sizeCode,
+        (v) => v.colorCode === color && v.sizeCode === candidate,
       );
-    if (sizeValidForColor && sizeCodes.has(fromUrl.sizeCode)) {
-      size = fromUrl.sizeCode;
+    if (sizeValidForColor && sizeCodes.has(candidate)) {
+      size = candidate;
+      break;
     }
   }
 
@@ -187,12 +213,10 @@ function ItemsContent() {
     void loadVariantsFor(url);
   }
 
-  // When the pasted URL already includes colorCode+sizeCode, load and preselect.
+  // Auto-load colors/sizes for any Uniqlo product URL (preselect when query has codes).
   useEffect(() => {
     const trimmed = url.trim();
-    if (!trimmed) return;
-    const { colorCode: c, sizeCode: s } = parseUniqloVariantFromUrl(trimmed);
-    if (!c || !s) return;
+    if (!trimmed || !isUniqloProductUrl(trimmed)) return;
 
     const handle = window.setTimeout(() => {
       void loadVariantsFor(trimmed);
