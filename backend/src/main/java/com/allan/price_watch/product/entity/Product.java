@@ -77,6 +77,15 @@ public class Product {
   @Column(name = "consecutive_failures", nullable = false)
   private int consecutiveFailures;
 
+  /** Null after a successful scrape; set when the last check failed. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "last_failure_reason", length = 40)
+  private ScrapeFailureReason lastFailureReason;
+
+  /** Short human-readable failure detail for the UI (not a full stack trace). */
+  @Column(name = "last_failure_detail", length = 500)
+  private String lastFailureDetail;
+
   @Generated(event = EventType.INSERT)
   @Column(name = "created_at", insertable = false, updatable = false, nullable = false)
   private Instant createdAt;

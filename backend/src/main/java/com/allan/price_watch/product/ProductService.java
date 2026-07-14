@@ -149,6 +149,8 @@ public class ProductService {
         .orElseThrow(() -> new ResourceNotFoundException("No product found with id " + productId));
 
     product.setConsecutiveFailures(0);
+    product.setLastFailureReason(null);
+    product.setLastFailureDetail(null);
     return ProductResponse.from(product);
   }
 

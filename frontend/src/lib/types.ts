@@ -66,6 +66,16 @@ export interface UpdateTrackedItemRequest {
   status?: TrackedItemStatus;
 }
 
+/** Why the last scrape failed (product parked or still retrying). */
+export type ScrapeFailureReason =
+  | "NETWORK"
+  | "HTTP_4XX"
+  | "HTTP_5XX"
+  | "VARIANT_MISSING"
+  | "PRODUCT_UNAVAILABLE"
+  | "PARSE"
+  | "UNKNOWN";
+
 export interface Product {
   id: string;
   name: string | null;
@@ -80,6 +90,8 @@ export interface Product {
   sizeName: string | null;
   lastCheckedAt: string | null;
   healthy: boolean;
+  lastFailureReason?: ScrapeFailureReason | null;
+  lastFailureDetail?: string | null;
 }
 
 /** GET /api/v1/products/variants?url=… — pick a SKU before tracking. */

@@ -35,6 +35,30 @@ export function stockLabel(status: string | null | undefined): string {
   }
 }
 
+/** Plain-language scrape failure for product health banners. */
+export function scrapeFailureLabel(
+  reason: string | null | undefined,
+): string {
+  switch (reason) {
+    case "VARIANT_MISSING":
+      return "This color/size is no longer listed on Uniqlo.";
+    case "PRODUCT_UNAVAILABLE":
+      return "This product is no longer available on Uniqlo.";
+    case "NETWORK":
+      return "Could not reach Uniqlo (network error).";
+    case "HTTP_5XX":
+      return "Uniqlo temporarily failed (server error).";
+    case "HTTP_4XX":
+      return "Uniqlo rejected the request.";
+    case "PARSE":
+      return "Could not read Uniqlo’s response.";
+    case "UNKNOWN":
+      return "Last check failed.";
+    default:
+      return "Checks paused after repeated scrape failures.";
+  }
+}
+
 /** Human-readable color / size line, e.g. "Black / M". */
 export function formatVariant(parts: {
   colorName?: string | null;

@@ -71,6 +71,16 @@ app:
       secure: ${REFRESH_COOKIE_SECURE:true}
   scheduler:
     product-check-cron: "0 0 */4 * * *"
+  scraper:
+    # Startup: re-queue healthy active products not checked within this window.
+    startup-stale-after: 1h
+    manual-check:
+      # Per-product cooldown for POST /products/{id}/check
+      product-cooldown: 15m
+      # Max single-product manual checks per user per rolling hour
+      user-hourly-limit: 20
+      # Cooldown for POST /products/check-all (user's full catalog)
+      check-all-cooldown: 1h
   outbox:
     poll-interval-ms: 5000
     batch-size: 50

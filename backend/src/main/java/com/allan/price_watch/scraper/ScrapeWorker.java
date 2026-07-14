@@ -11,7 +11,10 @@ import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
+import com.allan.price_watch.common.exception.InvalidVariantException;
+import com.allan.price_watch.common.exception.ScrapeFailedException;
 import com.allan.price_watch.product.entity.Product;
+import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.repository.ProductRepository;
 import com.allan.price_watch.scraper.lock.ProductLockService;
 import com.allan.price_watch.scraper.throttle.DomainThrottleService;
@@ -97,9 +100,17 @@ public class ScrapeWorker {
       ScrapeResult result = scraper.fetch(uri);
       scrapeResultService.recordSuccess(product, result);
       return ProcessOutcome.SUCCESS;
-    } catch (RuntimeException e) {
+    } catch (InvalidVariantException e) {
+      log.debug("Variant missing for product {}: {}", product.getId(), e.getMessage());
+      scrapeResultService.recordFailure(product, ScrapeFailureReason.VARIANT_MISSING, e.getMessage());
+      return ProcessOutcome.SCRAPE_FAILED;
+    } catch (ScrapeFailedException e) {
       log.debug("Scrape failed for product {}: {}", product.getId(), e.getMessage());
-      scrapeResultService.recordFailure(product);
+      scrapeResultService.recordFailure(product, e.getReason(), e.getMessage());
+      return ProcessOutcome.SCRAPE_FAILED;
+    } catch (RuntimeException e) {
+      log.debug("Unexpected scrape error for product {}: {}", product.getId(), e.getMessage());
+      scrapeResultService.recordFailure(product, ScrapeFailureReason.UNKNOWN, e.getMessage());
       return ProcessOutcome.SCRAPE_FAILED;
     }
   }

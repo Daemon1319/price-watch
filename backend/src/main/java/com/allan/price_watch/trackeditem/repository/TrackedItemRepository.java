@@ -1,5 +1,6 @@
 package com.allan.price_watch.trackeditem.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -51,6 +52,28 @@ public interface TrackedItemRepository extends JpaRepository<TrackedItem, UUID> 
         and ti.product.consecutiveFailures < :maxFailures
       """)
   List<UUID> findDistinctActiveHealthyProductIds(@Param("maxFailures") int maxFailures);
+
+  /** Distinct products for one user's ACTIVE trackers (manual check-all, includes unhealthy). */
+  @Query("""
+      select distinct ti.product.id from TrackedItem ti
+      where ti.user.id = :userId
+        and ti.status = com.allan.price_watch.trackeditem.entity.TrackedItemStatus.ACTIVE
+      """)
+  List<UUID> findDistinctActiveProductIdsByUserId(@Param("userId") UUID userId);
+
+  /**
+   * Healthy active products never checked or last checked before {@code staleBefore}
+   * (startup catch-up).
+   */
+  @Query("""
+      select distinct ti.product.id from TrackedItem ti
+      where ti.status = com.allan.price_watch.trackeditem.entity.TrackedItemStatus.ACTIVE
+        and ti.product.consecutiveFailures < :maxFailures
+        and (ti.product.lastCheckedAt is null or ti.product.lastCheckedAt < :staleBefore)
+      """)
+  List<UUID> findDistinctActiveHealthyStaleProductIds(
+      @Param("maxFailures") int maxFailures,
+      @Param("staleBefore") Instant staleBefore);
 
   /** Active trackers for a product, with user loaded for email delivery. */
   @Query("""
