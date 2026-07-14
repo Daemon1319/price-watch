@@ -4,6 +4,16 @@ export type StockStatus = "IN_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
 
 export type TrackedItemStatus = "ACTIVE" | "PAUSED";
 
+/** Why the last scrape failed (product parked or still retrying). */
+export type ScrapeFailureReason =
+  | "NETWORK"
+  | "HTTP_4XX"
+  | "HTTP_5XX"
+  | "VARIANT_MISSING"
+  | "PRODUCT_UNAVAILABLE"
+  | "PARSE"
+  | "UNKNOWN";
+
 /** Access JWT + opaque refresh (also set as HttpOnly cookie when same-site). */
 export interface LoginResponse {
   accessToken: string;
@@ -48,6 +58,10 @@ export interface TrackedItem {
   notifyOnRestockOnly: boolean;
   status: TrackedItemStatus;
   createdAt: string;
+  lastCheckedAt?: string | null;
+  healthy?: boolean;
+  lastFailureReason?: ScrapeFailureReason | null;
+  lastFailureDetail?: string | null;
 }
 
 export interface CreateTrackedItemRequest {
@@ -65,16 +79,6 @@ export interface UpdateTrackedItemRequest {
   notifyOnRestockOnly?: boolean;
   status?: TrackedItemStatus;
 }
-
-/** Why the last scrape failed (product parked or still retrying). */
-export type ScrapeFailureReason =
-  | "NETWORK"
-  | "HTTP_4XX"
-  | "HTTP_5XX"
-  | "VARIANT_MISSING"
-  | "PRODUCT_UNAVAILABLE"
-  | "PARSE"
-  | "UNKNOWN";
 
 export interface Product {
   id: string;

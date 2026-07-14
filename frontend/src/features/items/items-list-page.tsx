@@ -30,6 +30,7 @@ import {
   colorOptionLabel,
   formatPrice,
   formatVariant,
+  scrapeFailureLabel,
   sizeOptionLabel,
   stockLabel,
 } from "@/lib/format";
@@ -77,9 +78,9 @@ function ItemsContent() {
   const [items, setItems] = useState<TrackedItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<TrackedItemStatus | "ALL">(
-    "ALL",
-  );
+  const [statusFilter, setStatusFilter] = useState<
+    TrackedItemStatus | "ALL" | "UNHEALTHY"
+  >("ALL");
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [checkingAll, setCheckingAll] = useState(false);
@@ -109,7 +110,11 @@ function ItemsContent() {
       const res = await listTrackedItems({
         page,
         size,
-        status: statusFilter === "ALL" ? undefined : [statusFilter],
+        unhealthy: statusFilter === "UNHEALTHY" ? true : undefined,
+        status:
+          statusFilter === "ALL" || statusFilter === "UNHEALTHY"
+            ? undefined
+            : [statusFilter],
       });
       setItems(res.content);
       setTotal(res.totalElements);
@@ -472,16 +477,23 @@ function ItemsContent() {
       </Card>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {(["ALL", "ACTIVE", "PAUSED"] as const).map((s) => (
+        {(
+          [
+            { key: "ALL", label: "All" },
+            { key: "ACTIVE", label: "Active" },
+            { key: "PAUSED", label: "Paused" },
+            { key: "UNHEALTHY", label: "Unhealthy" },
+          ] as const
+        ).map(({ key, label }) => (
           <FilterChip
-            key={s}
-            active={statusFilter === s}
+            key={key}
+            active={statusFilter === key}
             onClick={() => {
-              setStatusFilter(s);
+              setStatusFilter(key);
               setPage(0);
             }}
           >
-            {s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
+            {label}
           </FilterChip>
         ))}
         <span className="ml-auto text-xs text-[var(--muted)] tabular-nums">
@@ -503,8 +515,16 @@ function ItemsContent() {
       ) : items.length === 0 ? (
         <Card className="p-0">
           <EmptyState
-            title="Nothing tracked yet"
-            description="Add a Uniqlo URL, pick color and size, then start tracking."
+            title={
+              statusFilter === "UNHEALTHY"
+                ? "No unhealthy products"
+                : "Nothing tracked yet"
+            }
+            description={
+              statusFilter === "UNHEALTHY"
+                ? "Products that fail scraping repeatedly show up here (e.g. discontinued color/size)."
+                : "Add a Uniqlo URL, pick color and size, then start tracking."
+            }
           />
         </Card>
       ) : (
@@ -512,18 +532,27 @@ function ItemsContent() {
           <ul className="divide-y divide-[var(--border)]">
             {items.map((item) => {
               const variant = formatVariant(item);
+              const unhealthy = item.healthy === false;
               return (
                 <li key={item.id}>
                   <Link
                     href={`/items/${item.id}`}
-                    className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-[var(--surface-muted)]/60 sm:gap-4 sm:px-5 sm:py-4"
+                    className={
+                      unhealthy
+                        ? "flex items-center gap-3 border-l-4 border-l-[var(--danger)] bg-[var(--danger-soft)]/30 px-4 py-3.5 transition-colors hover:bg-[var(--danger-soft)]/50 sm:gap-4 sm:px-5 sm:py-4"
+                        : "flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-[var(--surface-muted)]/60 sm:gap-4 sm:px-5 sm:py-4"
+                    }
                   >
                     {item.thumbnailUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={item.thumbnailUrl}
                         alt=""
-                        className="size-14 shrink-0 rounded-xl object-cover bg-[var(--surface-muted)] sm:size-16"
+                        className={
+                          unhealthy
+                            ? "size-14 shrink-0 rounded-xl object-cover bg-[var(--surface-muted)] opacity-80 sm:size-16"
+                            : "size-14 shrink-0 rounded-xl object-cover bg-[var(--surface-muted)] sm:size-16"
+                        }
                       />
                     ) : (
                       <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-muted)] text-[0.65rem] font-semibold text-[var(--muted)] sm:size-16">
@@ -538,15 +567,26 @@ function ItemsContent() {
                         {variant ? `${variant} · ` : ""}
                         {item.site} · {stockLabel(item.lastKnownStockStatus)}
                       </p>
+                      {unhealthy && (
+                        <p className="mt-1 truncate text-xs text-[var(--danger)]">
+                          {scrapeFailureLabel(item.lastFailureReason)}
+                        </p>
+                      )}
                       <div className="mt-2 flex flex-wrap items-center gap-2 sm:hidden">
                         <span className="text-sm font-semibold tabular-nums">
                           {formatPrice(item.lastKnownPrice)}
                         </span>
-                        <Badge
-                          tone={item.status === "ACTIVE" ? "success" : "neutral"}
-                        >
-                          {item.status}
-                        </Badge>
+                        {unhealthy ? (
+                          <Badge tone="danger">Unhealthy</Badge>
+                        ) : (
+                          <Badge
+                            tone={
+                              item.status === "ACTIVE" ? "success" : "neutral"
+                            }
+                          >
+                            {item.status}
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <div className="hidden shrink-0 text-right sm:block">
@@ -557,12 +597,18 @@ function ItemsContent() {
                         {stockLabel(item.lastKnownStockStatus)}
                       </p>
                     </div>
-                    <Badge
-                      className="hidden sm:inline-flex"
-                      tone={item.status === "ACTIVE" ? "success" : "neutral"}
-                    >
-                      {item.status}
-                    </Badge>
+                    {unhealthy ? (
+                      <Badge className="hidden sm:inline-flex" tone="danger">
+                        Unhealthy
+                      </Badge>
+                    ) : (
+                      <Badge
+                        className="hidden sm:inline-flex"
+                        tone={item.status === "ACTIVE" ? "success" : "neutral"}
+                      >
+                        {item.status}
+                      </Badge>
+                    )}
                     <span
                       className="hidden text-[var(--muted)] sm:inline"
                       aria-hidden

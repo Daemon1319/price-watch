@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.allan.price_watch.product.ProductHealth;
 import com.allan.price_watch.product.entity.Product;
+import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.entity.Site;
 import com.allan.price_watch.product.entity.StockStatus;
 import com.allan.price_watch.trackeditem.entity.TrackedItem;
@@ -30,7 +32,11 @@ public record TrackedItemResponse(
     BigDecimal priceThreshold,
     boolean notifyOnRestockOnly,
     TrackedItemStatus status,
-    Instant createdAt) {
+    Instant createdAt,
+    Instant lastCheckedAt,
+    boolean healthy,
+    ScrapeFailureReason lastFailureReason,
+    String lastFailureDetail) {
 
   public static TrackedItemResponse from(TrackedItem trackedItem, Product product) {
     // Prefer columns; if empty (legacy row), fall back to colorCode/sizeCode on the product URL.
@@ -53,7 +59,11 @@ public record TrackedItemResponse(
         trackedItem.getPriceThreshold(),
         trackedItem.isNotifyOnRestockOnly(),
         trackedItem.getStatus(),
-        trackedItem.getCreatedAt());
+        trackedItem.getCreatedAt(),
+        product.getLastCheckedAt(),
+        ProductHealth.isHealthy(product.getConsecutiveFailures()),
+        product.getLastFailureReason(),
+        product.getLastFailureDetail());
   }
 
   public static TrackedItemResponse from(TrackedItem trackedItem) {
