@@ -13,6 +13,9 @@ run-local-cloud.ps1
 ### Local runtime ###
 logs/
 
+### Postman ###
+/postman/
+
 
 
 ### STS ###
