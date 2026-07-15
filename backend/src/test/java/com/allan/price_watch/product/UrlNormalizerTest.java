@@ -69,7 +69,7 @@ class UrlNormalizerTest {
   }
 
   @Test
-  void mapsNewStorefrontDisplayCodesAndStripsPriceGroupPath() {
+  void mapsNewStorefrontDisplayCodesAndStripsDefaultPriceGroupPath() {
     String raw =
         "https://www.uniqlo.com/ph/en/products/E475367-000/00?colorDisplayCode=18&sizeDisplayCode=005";
 
@@ -87,5 +87,21 @@ class UrlNormalizerTest {
     assertEquals(
         "https://www.uniqlo.com/ph/en/products/E487742-000?colorCode=COL30&sizeCode=INS028",
         normalizer.normalize(raw));
+  }
+
+  @Test
+  void preservesNonDefaultPriceGroupPath() {
+    // Different price groups sell different colors (e.g. /00 Black vs /01 Light Gray).
+    String raw =
+        "https://www.uniqlo.com/ph/en/products/E478550-000/01?colorDisplayCode=02&sizeDisplayCode=003";
+
+    assertEquals(
+        "https://www.uniqlo.com/ph/en/products/E478550-000/01?colorCode=COL02&sizeCode=SMA003",
+        normalizer.normalize(raw));
+    assertEquals("01", UrlNormalizer.uniqloPriceGroupFromPath(
+        "/ph/en/products/E478550-000/01"));
+    assertNull(UrlNormalizer.uniqloPriceGroupFromPath("/ph/en/products/E478550-000"));
+    assertEquals("00", UrlNormalizer.uniqloPriceGroupFromPath(
+        "/ph/en/products/E478550-000/00"));
   }
 }

@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 
 import com.allan.price_watch.common.exception.InvalidVariantException;
 import com.allan.price_watch.common.exception.ScrapeFailedException;
+import com.allan.price_watch.product.UrlNormalizer;
 import com.allan.price_watch.product.entity.ScrapeFailureReason;
 import com.allan.price_watch.product.dto.ProductVariantOption;
 import com.allan.price_watch.product.dto.ProductVariantsResponse;
@@ -124,14 +126,15 @@ public class UniqloScraper implements Scraper {
   public ScrapeResult fetch(URI url) {
     ParsedProductUrl parsed = parseProductUrl(url);
     JsonNode product = fetchProduct(url, parsed);
-    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroupOf(product));
+    String priceGroup = resolvePriceGroup(url, product);
+    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroup);
 
     String colorCode = parsed.colorCode();
     String sizeCode = parsed.sizeCode();
-    List<JsonNode> relevantL2s = filterL2s(product.path("l2s"), colorCode, sizeCode);
-    if (relevantL2s.isEmpty() && l2Catalog.l2s().isArray()) {
-      // Product payload sometimes omits L2 rows; fall back to the price-group catalog.
-      relevantL2s = filterL2s(l2Catalog.l2s(), colorCode, sizeCode);
+    // Prefer L2s for the resolved price group (e.g. /01 → COL02). product.l2s is default-group only.
+    List<JsonNode> relevantL2s = filterL2s(l2Catalog.l2s(), colorCode, sizeCode);
+    if (relevantL2s.isEmpty()) {
+      relevantL2s = filterL2s(product.path("l2s"), colorCode, sizeCode);
     }
 
     if (colorCode != null && sizeCode != null && relevantL2s.isEmpty()) {
@@ -171,47 +174,19 @@ public class UniqloScraper implements Scraper {
 
   /**
    * Lists every color/size SKU for a product page (ignores colorCode/sizeCode on the URL).
+   * Uses the URL path price group when present ({@code /01} vs default {@code /00}).
    * Used by the UI to let the user pick a variant before tracking.
    */
   public ProductVariantsResponse listVariants(URI url) {
     ParsedProductUrl parsed = parseProductUrl(url);
     JsonNode product = fetchProduct(url, parsed);
-    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroupOf(product));
+    String priceGroup = resolvePriceGroup(url, product);
+    L2Catalog l2Catalog = fetchL2Catalog(url, parsed, priceGroup);
 
-    List<ColorOption> colors = new ArrayList<>();
-    JsonNode colorsNode = product.path("colors");
-    if (colorsNode.isArray()) {
-      for (JsonNode c : colorsNode) {
-        String code = catalog.normalizeVariantCode(c.path("code").asString(null));
-        if (code == null) {
-          continue;
-        }
-        colors.add(new ColorOption(
-            code,
-            blankToNull(c.path("name").asString(null)),
-            blankToNull(c.path("displayCode").asString(null))));
-      }
-    }
-
-    List<SizeOption> sizes = new ArrayList<>();
-    JsonNode sizesNode = product.path("sizes");
-    if (sizesNode.isArray()) {
-      for (JsonNode s : sizesNode) {
-        String code = catalog.normalizeVariantCode(s.path("code").asString(null));
-        if (code == null) {
-          continue;
-        }
-        sizes.add(new SizeOption(
-            code,
-            blankToNull(s.path("name").asString(null)),
-            blankToNull(s.path("displayCode").asString(null))));
-      }
-    }
-
-    // Prefer product L2s (often include color/size names); fall back to price-group L2s.
-    JsonNode l2s = product.path("l2s");
+    // Prefer L2s for the resolved price group — product.l2s/colors are default-group only.
+    JsonNode l2s = l2Catalog.l2s();
     if (!l2s.isArray() || l2s.size() == 0) {
-      l2s = l2Catalog.l2s();
+      l2s = product.path("l2s");
     }
 
     List<ProductVariantOption> variants = new ArrayList<>();
@@ -246,8 +221,15 @@ public class UniqloScraper implements Scraper {
       }
     }
 
+    // Colors/sizes for the dropdown must match this price group (not product.colors alone).
+    List<ColorOption> colors = colorsForPriceGroup(product, variants, l2s);
+    List<SizeOption> sizes = sizesForPriceGroup(product, variants, l2s);
+
     String baseUrl = "https://" + url.getHost().toLowerCase(Locale.ROOT)
         + "/" + parsed.locale() + "/" + parsed.language() + "/products/" + parsed.productId();
+    if (parsed.priceGroup() != null) {
+      baseUrl = baseUrl + "/" + parsed.priceGroup();
+    }
 
     return new ProductVariantsResponse(
         product.path("name").asString(null),
@@ -259,16 +241,147 @@ public class UniqloScraper implements Scraper {
   }
 
   private ParsedProductUrl parseProductUrl(URI url) {
-    Matcher matcher = LOCALE_AND_PRODUCT_ID_PATTERN.matcher(url.getPath() == null ? "" : url.getPath());
+    String path = url.getPath() == null ? "" : url.getPath();
+    Matcher matcher = LOCALE_AND_PRODUCT_ID_PATTERN.matcher(path);
     if (!matcher.find()) {
       throw new ScrapeFailedException("Could not parse locale/product id from Uniqlo URL: " + url);
     }
+    String colorCode = firstNonBlank(
+        queryParam(url, "colorCode"),
+        queryParam(url, "colorDisplayCode"));
+    String sizeCode = firstNonBlank(
+        queryParam(url, "sizeCode"),
+        queryParam(url, "sizeDisplayCode"));
     return new ParsedProductUrl(
         matcher.group(1).toLowerCase(Locale.ROOT),
         matcher.group(2).toLowerCase(Locale.ROOT),
         matcher.group(3).toUpperCase(Locale.ROOT),
-        catalog.normalizeVariantCode(queryParam(url, "colorCode")),
-        catalog.normalizeVariantCode(queryParam(url, "sizeCode")));
+        UrlNormalizer.uniqloPriceGroupFromPath(path),
+        catalog.normalizeColorCode(colorCode),
+        catalog.normalizeSizeCode(sizeCode));
+  }
+
+  /**
+   * Path price group wins ({@code /01}); otherwise the product document default ({@code 00}).
+   */
+  private String resolvePriceGroup(URI url, JsonNode product) {
+    String fromPath = UrlNormalizer.uniqloPriceGroupFromPath(url.getPath());
+    if (fromPath != null) {
+      return fromPath;
+    }
+    return priceGroupOf(product);
+  }
+
+  /** Distinct colors sold in this price group (L2s first; product.colors as name source). */
+  private List<ColorOption> colorsForPriceGroup(
+      JsonNode product, List<ProductVariantOption> variants, JsonNode l2s) {
+    LinkedHashMap<String, ColorOption> byCode = new LinkedHashMap<>();
+    if (l2s != null && l2s.isArray()) {
+      for (JsonNode l2 : l2s) {
+        String code = catalog.normalizeVariantCode(l2.path("color").path("code").asString(null));
+        if (code == null || byCode.containsKey(code)) {
+          continue;
+        }
+        String name = blankToNull(l2.path("color").path("name").asString(null));
+        if (name == null) {
+          name = colorNameFromCatalog(product.path("colors"), code);
+        }
+        String display = blankToNull(l2.path("color").path("displayCode").asString(null));
+        if (display == null) {
+          display = catalog.colorDigitsOf(code);
+        }
+        byCode.put(code, new ColorOption(code, name, display));
+      }
+    }
+    if (byCode.isEmpty()) {
+      for (ProductVariantOption v : variants) {
+        if (v.colorCode() == null || byCode.containsKey(v.colorCode())) {
+          continue;
+        }
+        byCode.put(
+            v.colorCode(),
+            new ColorOption(
+                v.colorCode(),
+                v.colorName(),
+                catalog.colorDigitsOf(v.colorCode())));
+      }
+    }
+    if (byCode.isEmpty()) {
+      JsonNode colorsNode = product.path("colors");
+      if (colorsNode.isArray()) {
+        for (JsonNode c : colorsNode) {
+          String code = catalog.normalizeVariantCode(c.path("code").asString(null));
+          if (code == null) {
+            continue;
+          }
+          byCode.put(
+              code,
+              new ColorOption(
+                  code,
+                  blankToNull(c.path("name").asString(null)),
+                  blankToNull(c.path("displayCode").asString(null))));
+        }
+      }
+    }
+    return new ArrayList<>(byCode.values());
+  }
+
+  /** Distinct sizes sold in this price group. */
+  private List<SizeOption> sizesForPriceGroup(
+      JsonNode product, List<ProductVariantOption> variants, JsonNode l2s) {
+    LinkedHashMap<String, SizeOption> byCode = new LinkedHashMap<>();
+    if (l2s != null && l2s.isArray()) {
+      for (JsonNode l2 : l2s) {
+        String code = catalog.normalizeVariantCode(l2.path("size").path("code").asString(null));
+        if (code == null || byCode.containsKey(code)) {
+          continue;
+        }
+        String name = blankToNull(l2.path("size").path("name").asString(null));
+        if (name == null) {
+          name = sizeNameFromCatalog(product.path("sizes"), code);
+        }
+        String display = blankToNull(l2.path("size").path("displayCode").asString(null));
+        byCode.put(code, new SizeOption(code, name, display));
+      }
+    }
+    if (byCode.isEmpty()) {
+      for (ProductVariantOption v : variants) {
+        if (v.sizeCode() == null || byCode.containsKey(v.sizeCode())) {
+          continue;
+        }
+        byCode.put(
+            v.sizeCode(),
+            new SizeOption(v.sizeCode(), v.sizeName(), null));
+      }
+    }
+    if (byCode.isEmpty()) {
+      JsonNode sizesNode = product.path("sizes");
+      if (sizesNode.isArray()) {
+        for (JsonNode s : sizesNode) {
+          String code = catalog.normalizeVariantCode(s.path("code").asString(null));
+          if (code == null) {
+            continue;
+          }
+          byCode.put(
+              code,
+              new SizeOption(
+                  code,
+                  blankToNull(s.path("name").asString(null)),
+                  blankToNull(s.path("displayCode").asString(null))));
+        }
+      }
+    }
+    return new ArrayList<>(byCode.values());
+  }
+
+  private static String firstNonBlank(String a, String b) {
+    if (a != null && !a.isBlank()) {
+      return a;
+    }
+    if (b != null && !b.isBlank()) {
+      return b;
+    }
+    return null;
   }
 
   private URI productApiUrl(URI pageUrl, ParsedProductUrl parsed) {
@@ -641,11 +754,13 @@ public class UniqloScraper implements Scraper {
     return null;
   }
 
-  /** Parsed locale/language/productId and optional variant query codes. */
+  /** Parsed locale/language/productId, optional path price group, and variant query codes. */
   private record ParsedProductUrl(
       String locale,
       String language,
       String productId,
+      /** Path segment like {@code "01"}, or null when absent / default stripped. */
+      String priceGroup,
       String colorCode,
       String sizeCode) {
   }

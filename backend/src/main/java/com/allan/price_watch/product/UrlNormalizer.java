@@ -34,9 +34,10 @@ public class UrlNormalizer {
   /**
    * Uniqlo product path with optional price-group suffix:
    * {@code /ph/en/products/E475367-000} or {@code /ph/en/products/E475367-000/00}.
+   * Group 1 = base path; group 2 = price group digits when present.
    */
   private static final Pattern UNIQLO_PRODUCT_PATH = Pattern.compile(
-      "^(/(?i)[a-z]{2}/[a-z]{2}/products/[A-Z0-9-]+)(?:/\\d{1,4})?/?$",
+      "^(/(?i)[a-z]{2}/[a-z]{2}/products/[A-Z0-9-]+)(?:/(\\d{1,4}))?/?$",
       Pattern.CASE_INSENSITIVE);
 
   private final UniqloCatalog uniqloCatalog;
@@ -133,18 +134,46 @@ public class UrlNormalizer {
   }
 
   /**
-   * Drops {@code /00}-style price-group suffixes so
+   * Drops the default {@code /00} price-group suffix so
    * {@code .../products/E…-000/00} and {@code .../products/E…-000} share one key.
+   *
+   * <p>Non-default groups ({@code /01}, {@code /02}, …) are kept: Uniqlo sells different
+   * color sets per price group, so dropping them would fetch the wrong SKUs.
    */
   static String stripUniqloPriceGroupSuffix(String path) {
     if (path == null || path.isBlank()) {
       return path;
     }
     Matcher m = UNIQLO_PRODUCT_PATH.matcher(path);
-    if (m.matches()) {
-      return m.group(1);
+    if (!m.matches()) {
+      return path;
     }
-    return path;
+    String base = m.group(1);
+    String priceGroup = m.group(2);
+    if (priceGroup == null || priceGroup.isBlank() || "00".equals(priceGroup)) {
+      return base;
+    }
+    // Zero-pad to 2 digits to match Uniqlo storefront paths (01, not 1).
+    String padded = priceGroup.length() == 1 ? "0" + priceGroup : priceGroup;
+    return base + "/" + padded;
+  }
+
+  /**
+   * Price-group segment from a Uniqlo product path ({@code /01} → {@code "01"}), or null.
+   */
+  public static String uniqloPriceGroupFromPath(String path) {
+    if (path == null || path.isBlank()) {
+      return null;
+    }
+    Matcher m = UNIQLO_PRODUCT_PATH.matcher(path);
+    if (!m.matches()) {
+      return null;
+    }
+    String priceGroup = m.group(2);
+    if (priceGroup == null || priceGroup.isBlank()) {
+      return null;
+    }
+    return priceGroup.length() == 1 ? "0" + priceGroup : priceGroup;
   }
 
   /** Drops tracking params, maps display codes → colorCode/sizeCode, sorts for stable keys. */

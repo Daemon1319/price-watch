@@ -59,6 +59,14 @@ class UniqloScraperTest {
   }
 
   @Test
+  void queryParamReadsDisplayCodes() {
+    URI url = URI.create(
+        "https://www.uniqlo.com/ph/en/products/E478550-000/01?colorDisplayCode=02&sizeDisplayCode=003");
+    assertEquals("02", UniqloScraper.queryParam(url, "colorDisplayCode"));
+    assertEquals("003", UniqloScraper.queryParam(url, "sizeDisplayCode"));
+  }
+
+  @Test
   void clientIdFollowsLocaleWebSpaPattern() {
     assertEquals("uq.ph.web-spa", UniqloScraper.clientIdForLocale("ph"));
     assertEquals("uq.sg.web-spa", UniqloScraper.clientIdForLocale("SG"));
