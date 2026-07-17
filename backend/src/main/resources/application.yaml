@@ -212,14 +212,94 @@ logging:
     '[com.allan.price_watch]': DEBUG
 
 ---
-# Deployed environment — all secrets/hosts from env; fail fast if missing.
+# Deployed / public API. No secrets in this file — set via environment.
+# Fail fast if required vars are missing (placeholders have no defaults).
+#
+# Required:
+#   SPRING_PROFILES_ACTIVE=prod
+#   SPRING_DATASOURCE_URL=jdbc:postgresql://...neon.tech/db?sslmode=require
+#   SPRING_DATASOURCE_USERNAME=...
+#   SPRING_DATASOURCE_PASSWORD=...
+#   SPRING_DATA_REDIS_URL=rediss://default:PASSWORD@....upstash.io:6379
+#   SPRING_RABBITMQ_ADDRESSES=amqps://user:pass@....rmq.cloudamqp.com/vhost
+#   SPRING_MAIL_HOST=smtp-relay.brevo.com
+#   SPRING_MAIL_PORT=587
+#   SPRING_MAIL_USERNAME=...
+#   SPRING_MAIL_PASSWORD=...          # SMTP key, not API key
+#   MAIL_FROM=noreply@yourdomain.com
+#   JWT_SECRET=...                    # base64, >= 256-bit key material
+#   CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
+#
+# Optional (defaults shown):
+#   PORT=8080                         # Railway / many PaaS inject this
+#   SERVER_PORT=8080                  # same as PORT if you set it yourself
+#   REFRESH_COOKIE_SECURE=true
+#   REFRESH_COOKIE_SAME_SITE=None     # cross-site SPA (Vercel → API)
+#   RATE_LIMIT_TRUST_FORWARDED_HEADERS=true   # behind Azure/Railway proxy
+#   TRACKING_MAX_ITEMS_PER_USER=50
+#   MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health
+#
+# Azure / Railway / similar: put the same keys in the host's env / App Settings UI.
 spring:
   config:
     activate:
       on-profile: prod
+
+  data:
+    redis:
+      ssl:
+        enabled: true
+
+  rabbitmq:
+    ssl:
+      enabled: true
+
+  mail:
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  # Never pull Compose deps in deployed environments.
+  docker:
+    compose:
+      enabled: false
+
+# Platforms (Railway, etc.) inject PORT; default 8080 for smoke tests.
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Public surface: health only. Override to add metrics/prometheus if needed.
+        include: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:health}
+  endpoint:
+    health:
+      show-details: never
 
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
   jwt:
     secret: ${JWT_SECRET}
+    access-token-ttl: 15m
+  auth:
+    refresh-cookie:
+      same-site: ${REFRESH_COOKIE_SAME_SITE:None}
+      secure: ${REFRESH_COOKIE_SECURE:true}
+  rate-limit:
+    # Deployed behind a reverse proxy; use X-Forwarded-For for client IP.
+    trust-forwarded-headers: ${RATE_LIMIT_TRUST_FORWARDED_HEADERS:true}
+  mail:
+    from: ${MAIL_FROM}
+  errors:
+    expose-details: false
+
+logging:
+  level:
+    root: INFO
+    '[com.allan.price_watch]': INFO

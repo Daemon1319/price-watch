@@ -1,24 +1,48 @@
+# --- Spring / Maven local docs ---
 HELP.md
+
+# --- Build ---
 target/
-.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+dependency-reduced-pom.xml
+.flattened-pom.xml
 
-### Local secrets / run scripts (never commit) ###
+# --- Local secrets / run scripts (never commit real credentials) ---
 run-local-cloud.ps1
+run-local-cloud.*.ps1
+!run-local-cloud.ps1.example
 *.local.ps1
+*.local.env
 .env
 .env.*
+!.env.example
+!.env.*.example
+secrets/
+*.pem
+*.p12
+*.jks
 
-### Local runtime ###
+# --- Local runtime ---
 logs/
+*.log
+*.pid
+*.out
 
-### Postman ###
-/postman/
+# --- Postman (local only — often has URLs/tokens; not needed on GitHub) ---
+postman/
+*.postman_collection.json
+*.postman_environment.json
 
-
-
-### STS ###
+# --- STS / Eclipse ---
 .apt_generated
 .classpath
 .factorypath
@@ -26,14 +50,16 @@ logs/
 .settings
 .springBeans
 .sts4-cache
+bin/
 
-### IntelliJ IDEA ###
+# --- IntelliJ IDEA ---
 .idea
 *.iws
 *.iml
 *.ipr
+out/
 
-### NetBeans ###
+# --- NetBeans ---
 /nbproject/private/
 /nbbuild/
 /dist/
@@ -43,5 +69,11 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
-### VS Code ###
+# --- VS Code / Cursor ---
 .vscode/
+.cursor/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
