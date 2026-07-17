@@ -1,16 +1,56 @@
-# Editor / IDE (local only)
+# --- Editor / IDE ---
 .vscode/
 .idea/
 *.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+*.swp
+*~
+.cursor/
+.fleet/
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
 desktop.ini
+ehthumbs.db
 
-# Env / secrets at monorepo root
+# --- Env / secrets (any package) ---
 .env
 .env.*
+!.env.example
+!.env.*.example
+*.pem
+*.p12
+*.jks
+secrets/
+**/credentials.*
+**/service-account*.json
 
-# Empty leftover nest from monorepo hoist (delete locally when no process locks it)
+# --- Logs / runtime ---
+*.log
+logs/
+**/logs/
+*.pid
+
+# --- Build artifacts (belt-and-suspenders for monorepo) ---
+**/target/
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/build/
+**/*.tsbuildinfo
+**/.turbo/
+**/.vercel/
+**/coverage/
+
+# --- JVM crash dumps (build outputs live in backend/.gitignore) ---
+hs_err_pid*
+replay_pid*
+
+# --- Empty leftover nest from monorepo hoist ---
 /price_watch/
